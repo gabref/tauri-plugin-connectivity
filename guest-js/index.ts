@@ -25,6 +25,8 @@ export interface ConnectionStatus {
     *
     * Platform mapping:
     * - **Windows:** `NetworkCostType` is `Fixed` or `Variable`
+    * - **Linux:** NetworkManager primary device `Metered` is `YES` or
+    *   `GUESS_YES`; passive fallback defaults to `false`
     * - **iOS:** `NWPath.isExpensive`
     * - **Android:** absence of `NET_CAPABILITY_NOT_METERED`
     */
@@ -35,7 +37,10 @@ export interface ConnectionStatus {
     * roaming, or background data usage is restricted.
     *
     * Platform mapping:
-    * - **Windows:** `ApproachingDataLimit`, `OverDataLimit`, or `Roaming`
+    * - **Windows:** `ApproachingDataLimit`, `OverDataLimit`, `Roaming`, or
+    *   `BackgroundDataUsageRestricted`
+    * - **Linux:** NetworkManager primary device is metered, or ModemManager
+    *   reports cellular roaming; passive fallback defaults to `false`
     * - **iOS:** `NWPath.isConstrained` (Low Data Mode)
     * - **Android:** Data Saver / `RESTRICT_BACKGROUND_STATUS`
     */
