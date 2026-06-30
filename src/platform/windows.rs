@@ -2,10 +2,11 @@ use tracing::{debug, warn};
 use windows::Networking::Connectivity::{
    ConnectionCost, ConnectionProfile, NetworkConnectivityLevel, NetworkCostType, NetworkInformation,
 };
-use windows::Win32::Foundation::{ERROR_BUFFER_OVERFLOW, NO_ERROR};
+use windows::Win32::Foundation::{ERROR_BUFFER_OVERFLOW, ERROR_NO_DATA, NO_ERROR};
 use windows::Win32::NetworkManagement::IpHelper::{
    GAA_FLAG_INCLUDE_ALL_INTERFACES, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER,
-   GAA_FLAG_SKIP_MULTICAST, GAA_FLAG_SKIP_UNICAST, GetAdaptersAddresses, IP_ADAPTER_ADDRESSES_LH,
+   GAA_FLAG_SKIP_MULTICAST, GAA_FLAG_SKIP_UNICAST, GetAdaptersAddresses, GetIfEntry2,
+   IP_ADAPTER_ADDRESSES_LH, MIB_IF_ROW2,
 };
 use windows::Win32::Networking::WinSock::AF_UNSPEC;
 
@@ -20,6 +21,49 @@ const IANA_IEEE80211: u32 = 71;
 /// IANA interface types for WWAN mobile broadband transports.
 const IANA_WWANPP: u32 = 243;
 const IANA_WWANPP2: u32 = 244;
+
+// `MIB_IF_ROW2.InterfaceAndOperStatusFlags` stores `HardwareInterface`
+// in its least-significant bit.
+const HARDWARE_INTERFACE_FLAG: u8 = 1;
+
+fn classify_enumeration_result(
+   result: u32,
+   success: u32,
+   no_data: u32,
+) -> std::result::Result<bool, u32> {
+   if result == success {
+      Ok(true)
+   } else if result == no_data {
+      Ok(false)
+   } else {
+      Err(result)
+   }
+}
+
+fn collect_successful_items<T, E>(
+   results: impl IntoIterator<Item = std::result::Result<Option<T>, E>>,
+) -> std::result::Result<Vec<T>, E> {
+   let mut items = Vec::new();
+   let mut first_error = None;
+
+   for result in results {
+      match result {
+         Ok(Some(item)) => items.push(item),
+         Ok(None) => {}
+         Err(error) => {
+            first_error.get_or_insert(error);
+         }
+      }
+   }
+
+   if items.is_empty()
+      && let Some(error) = first_error
+   {
+      return Err(error);
+   }
+
+   Ok(items)
+}
 
 /// Returns the current network connection status using WinRT
 /// [`NetworkInformation`](https://learn.microsoft.com/en-us/uwp/api/windows.networking.connectivity.networkinformation?view=winrt-28000).
@@ -104,8 +148,8 @@ pub fn supported_connection_types() -> Result<Vec<ConnectionType>> {
    // profiles that are not current hardware. The API and buffer contract are
    // documented here:
    // https://learn.microsoft.com/en-us/windows/win32/api/iphlpapi/nf-iphlpapi-getadaptersaddresses
-   Ok(collect_supported_connection_types(
-      adapter_interface_types()?
+   Ok(collect_supported_connection_types_from_adapters(
+      adapter_interface_types()?,
    ))
 }
 
@@ -221,7 +265,19 @@ fn collect_supported_connection_types(
    connection_types.into_vec()
 }
 
-fn adapter_interface_types() -> Result<Vec<u32>> {
+fn collect_supported_connection_types_from_adapters(
+   adapters: impl IntoIterator<Item = (u32, bool)>,
+) -> Vec<ConnectionType> {
+   collect_supported_connection_types(
+      adapters
+         .into_iter()
+         .filter_map(|(iana_interface_type, is_hardware)| {
+            is_hardware.then_some(iana_interface_type)
+         }),
+   )
+}
+
+fn adapter_interface_types() -> Result<Vec<(u32, bool)>> {
    // Microsoft recommends a 15 KB initial buffer to avoid repeated allocation
    // for typical adapter lists. If the buffer is still too small,
    // `ERROR_BUFFER_OVERFLOW` returns the required size.
@@ -264,23 +320,67 @@ fn adapter_interface_types() -> Result<Vec<u32>> {
       };
    }
 
-   if result != NO_ERROR.0 {
-      return Err(Error::DetectionFailed {
-         message: String::from("GetAdaptersAddresses failed"),
-         code: Some(result as i32),
-      });
+   match classify_enumeration_result(result, NO_ERROR.0, ERROR_NO_DATA.0) {
+      Ok(true) => {}
+      Ok(false) => return Ok(Vec::new()),
+      Err(result) => {
+         return Err(Error::DetectionFailed {
+            message: String::from("GetAdaptersAddresses failed"),
+            code: Some(result as i32),
+         });
+      }
    }
 
-   let mut iana_interface_types = Vec::new();
+   let mut adapter_results = Vec::new();
    let mut adapter = buffer.as_ptr();
 
    while !adapter.is_null() {
       let adapter_ref = unsafe { &*adapter };
-      iana_interface_types.push(adapter_ref.IfType);
+
+      // IANA interface types alone do not distinguish a physical Ethernet
+      // adapter from Ethernet-like virtual adapters. Query the interface row
+      // by LUID and keep only interfaces Windows identifies as hardware-backed:
+      // https://learn.microsoft.com/en-us/windows/win32/api/netioapi/ns-netioapi-mib_if_row2
+      let mut interface = MIB_IF_ROW2 {
+         InterfaceLuid: adapter_ref.Luid,
+         ..MIB_IF_ROW2::default()
+      };
+      let interface_result = unsafe { GetIfEntry2(&mut interface) };
+
+      if interface_result != NO_ERROR {
+         warn!(
+            code = interface_result.0,
+            iana_interface_type = adapter_ref.IfType,
+            "failed to query Windows adapter hardware status; skipping adapter"
+         );
+         adapter_results.push(Err(interface_result.0));
+         adapter = adapter_ref.Next;
+         continue;
+      }
+
+      let is_hardware =
+         interface.InterfaceAndOperStatusFlags._bitfield & HARDWARE_INTERFACE_FLAG != 0;
+
+      if !is_hardware {
+         debug!(
+            iana_interface_type = adapter_ref.IfType,
+            "skipping virtual Windows network adapter"
+         );
+      }
+
+      let is_supported_hardware =
+         is_hardware && map_iana_interface_type(adapter_ref.IfType) != ConnectionType::Unknown;
+
+      adapter_results.push(Ok(
+         is_supported_hardware.then_some((adapter_ref.IfType, is_hardware))
+      ));
       adapter = adapter_ref.Next;
    }
 
-   Ok(iana_interface_types)
+   collect_successful_items(adapter_results).map_err(|result| Error::DetectionFailed {
+      message: String::from("GetIfEntry2 failed for every adapter"),
+      code: Some(result as i32),
+   })
 }
 
 fn adapter_buffer(size_in_bytes: u32) -> Vec<IP_ADAPTER_ADDRESSES_LH> {
@@ -391,5 +491,51 @@ mod tests {
             ConnectionType::Cellular,
          ]
       );
+   }
+
+   #[test]
+   fn excludes_virtual_adapters_from_supported_connection_types() {
+      assert_eq!(
+         collect_supported_connection_types_from_adapters([
+            (IANA_IEEE80211, true),
+            (IANA_ETHERNET_CSMACD, false),
+         ]),
+         vec![ConnectionType::Wifi]
+      );
+   }
+   #[test]
+   fn classifies_native_no_data_as_empty_enumeration() {
+      assert_eq!(classify_enumeration_result(232, 0, 232), Ok(false));
+   }
+
+   #[test]
+   fn classifies_native_success_as_populated_enumeration() {
+      assert_eq!(classify_enumeration_result(0, 0, 232), Ok(true));
+   }
+
+   #[test]
+   fn preserves_native_enumeration_failures() {
+      assert_eq!(classify_enumeration_result(5, 0, 232), Err(5));
+   }
+
+   #[test]
+   fn reports_failure_when_every_item_query_fails() {
+      let results = [Err::<Option<(u32, bool)>, _>(1168), Err(1168)];
+
+      assert_eq!(collect_successful_items(results), Err(1168));
+   }
+
+   #[test]
+   fn reports_failure_when_successful_queries_find_no_usable_items() {
+      let results = [Err::<Option<(u32, bool)>, _>(1168), Ok(None)];
+
+      assert_eq!(collect_successful_items(results), Err(1168));
+   }
+
+   #[test]
+   fn keeps_partial_results_when_an_item_query_succeeds() {
+      let results = [Err(1168), Ok(Some((71, true)))];
+
+      assert_eq!(collect_successful_items(results), Ok(vec![(71, true)]));
    }
 }
