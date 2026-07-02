@@ -12,7 +12,7 @@ use crate::types::{ConnectionStatus, ConnectionType};
 
 /// Returns the current network connection status.
 ///
-/// On platforms without an implementation, this returns [`Error::Unsupported`].
+/// On platforms without an implementation, this returns [`crate::Error::Unsupported`].
 #[command]
 pub(crate) async fn connection_status<R: Runtime>(_app: AppHandle<R>) -> Result<ConnectionStatus> {
    debug!("received frontend request for connection_status");
@@ -43,8 +43,8 @@ pub(crate) async fn connection_status<R: Runtime>(_app: AppHandle<R>) -> Result<
 /// Returns the supported physical connection transport classes.
 ///
 /// An empty vector means detection succeeded but found no supported transports.
-/// Detection failures return [`Error::DetectionFailed`].
-/// On platforms without an implementation, this returns [`Error::Unsupported`].
+/// Detection failures return [`crate::Error::DetectionFailed`].
+/// On platforms without an implementation, this returns [`crate::Error::Unsupported`].
 #[command]
 pub(crate) async fn supported_connection_types<R: Runtime>(
    _app: AppHandle<R>,
