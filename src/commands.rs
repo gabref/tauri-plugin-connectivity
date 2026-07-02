@@ -42,6 +42,8 @@ pub(crate) async fn connection_status<R: Runtime>(_app: AppHandle<R>) -> Result<
 
 /// Returns the supported physical connection transport classes.
 ///
+/// An empty vector means detection succeeded but found no supported transports.
+/// Detection failures return [`Error::DetectionFailed`].
 /// On platforms without an implementation, this returns [`Error::Unsupported`].
 #[command]
 pub(crate) async fn supported_connection_types<R: Runtime>(

@@ -159,8 +159,9 @@ async function shouldDownload(): Promise<boolean> {
 #### Query supported transport classes
 
 Use `supportedConnectionTypes()` when the app needs to show policy settings for
-transport classes the device can use, even when that transport is not currently
-active:
+transport classes the device can use. On Android, transports declared as
+`PackageManager` system features are reported even when inactive; other
+transports are reported only while currently active:
 
 ```ts
 import { supportedConnectionTypes } from '@silvermine/tauri-plugin-connectivity';
@@ -206,7 +207,9 @@ The `connectionStatus()` function returns a `ConnectionStatus` object:
 
 The `supportedConnectionTypes()` function returns `ConnectionType[]`. The array
 is deduplicated, excludes `unknown`, and represents physical transport classes
-the device can use rather than the currently preferred connection.
+the device can use rather than the currently preferred connection. An empty
+array means detection succeeded but found no supported transports; detection
+failures reject the promise.
 
 | Platform | Mapping |
 | -------- | ------- |
@@ -217,8 +220,9 @@ the device can use rather than the currently preferred connection.
 | Android  | `PackageManager` hardware features plus current `ConnectivityManager` networks |
 
 Android does not expose a complete public SDK inventory of inactive removable
-network adapters. Removable transports that are not declared as system features
-may appear only after Android exposes them through `ConnectivityManager`.
+network adapters. Transports that are not declared as `PackageManager` system
+features are reported only while Android exposes them as currently active
+through `ConnectivityManager`.
 
 #### Platform mapping
 

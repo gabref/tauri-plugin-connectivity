@@ -73,6 +73,10 @@ export async function connectionStatus(): Promise<ConnectionStatus> {
  *
  * The result is deduplicated, excludes `'unknown'`, and represents transport
  * classes the device can use rather than the currently selected connection.
+ * An empty array means detection succeeded but found no supported transports;
+ * the promise rejects when detection fails.
+ * On Android, transports not declared as `PackageManager` system features are
+ * reported only while currently active.
  */
 export async function supportedConnectionTypes(): Promise<ConnectionType[]> {
    return invoke<ConnectionType[]>('plugin:connectivity|supported_connection_types');

@@ -11,7 +11,7 @@ use zbus::names::BusName;
 use zbus::proxy::CacheProperties;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::types::{ConnectionStatus, ConnectionType, ConnectionTypes};
 
 // These local D-Bus calls read cached service state and normally complete within
@@ -170,7 +170,7 @@ pub fn supported_connection_types() -> Result<Vec<ConnectionType>> {
       Ok(connection) => connection,
       Err(error) => {
          warn!(%error, "failed to connect to Linux system bus; using sysfs fallback");
-         return Ok(supported_types_from_sysfs(Path::new(SYS_CLASS_NET)));
+         return supported_types_from_sysfs(Path::new(SYS_CLASS_NET));
       }
    };
 
@@ -179,13 +179,13 @@ pub fn supported_connection_types() -> Result<Vec<ConnectionType>> {
          Ok(connection_types) => Ok(connection_types),
          Err(error) => {
             warn!(%error, "failed to query NetworkManager devices; using sysfs fallback");
-            Ok(supported_types_from_sysfs(Path::new(SYS_CLASS_NET)))
+            supported_types_from_sysfs(Path::new(SYS_CLASS_NET))
          }
       },
-      Ok(false) => Ok(supported_types_from_sysfs(Path::new(SYS_CLASS_NET))),
+      Ok(false) => supported_types_from_sysfs(Path::new(SYS_CLASS_NET)),
       Err(error) => {
          warn!(%error, "failed to probe NetworkManager service; using sysfs fallback");
-         Ok(supported_types_from_sysfs(Path::new(SYS_CLASS_NET)))
+         supported_types_from_sysfs(Path::new(SYS_CLASS_NET))
       }
    }
 }
@@ -201,21 +201,18 @@ fn network_manager_supported_connection_types(
    )?;
    let devices = manager.get_property::<Vec<OwnedObjectPath>>("Devices")?;
 
-   Ok(collect_supported_connection_types_from_devices(
-      devices,
-      |device| {
-         // DeviceType is the NetworkManager transport enum. Values used below are
-         // from the NetworkManager D-Bus type reference:
-         // https://networkmanager.pages.freedesktop.org/NetworkManager/NetworkManager/nm-dbus-types.html
-         let device_proxy = dbus_proxy(
-            connection,
-            NETWORK_MANAGER_SERVICE,
-            device.as_str(),
-            NETWORK_MANAGER_DEVICE_INTERFACE,
-         )?;
-         device_proxy.get_property::<u32>("DeviceType")
-      },
-   ))
+   collect_supported_connection_types_from_devices(devices, |device| {
+      // DeviceType is the NetworkManager transport enum. Values used below are
+      // from the NetworkManager D-Bus type reference:
+      // https://networkmanager.pages.freedesktop.org/NetworkManager/NetworkManager/nm-dbus-types.html
+      let device_proxy = dbus_proxy(
+         connection,
+         NETWORK_MANAGER_SERVICE,
+         device.as_str(),
+         NETWORK_MANAGER_DEVICE_INTERFACE,
+      )?;
+      device_proxy.get_property::<u32>("DeviceType")
+   })
 }
 
 fn system_bus_connection() -> zbus::Result<Connection> {
@@ -578,28 +575,39 @@ fn collect_supported_connection_types(
 fn collect_supported_connection_types_from_devices<E>(
    devices: impl IntoIterator<Item = OwnedObjectPath>,
    mut read_device_type: impl FnMut(&OwnedObjectPath) -> std::result::Result<u32, E>,
-) -> Vec<ConnectionType>
+) -> std::result::Result<Vec<ConnectionType>, E>
 where
    E: std::fmt::Display,
 {
-   let device_types = devices
-      .into_iter()
-      .filter_map(|device| match read_device_type(&device) {
+   let mut device_types = Vec::new();
+   let mut first_error = None;
+
+   for device in devices {
+      match read_device_type(&device) {
          Ok(device_type) => {
             debug!(
                device = %device.as_str(),
                device_type,
                "queried NetworkManager supported device type"
             );
-            Some(device_type)
+            device_types.push(device_type);
          }
          Err(error) => {
             warn!(%error, device = %device.as_str(), "failed to read NetworkManager device type");
-            None
+            first_error.get_or_insert(error);
          }
-      });
+      }
+   }
 
-   collect_supported_connection_types(device_types)
+   let connection_types = collect_supported_connection_types(device_types);
+
+   if connection_types.is_empty()
+      && let Some(error) = first_error
+   {
+      return Err(error);
+   }
+
+   Ok(connection_types)
 }
 
 fn is_metered(metered: u32) -> bool {
@@ -696,18 +704,28 @@ fn infer_transport_from_sysfs(sys_class_net: &Path, iface: &str) -> ConnectionTy
    ConnectionType::Unknown
 }
 
-fn supported_types_from_sysfs(sys_class_net: &Path) -> Vec<ConnectionType> {
+fn supported_types_from_sysfs(sys_class_net: &Path) -> Result<Vec<ConnectionType>> {
    // `/sys/class/net` is the kernel's sysfs view of present network interfaces.
    // This fallback is intentionally passive, matching the status fallback above:
    // https://docs.kernel.org/networking/net-sysfs.html
-   let Ok(entries) = fs::read_dir(sys_class_net) else {
-      warn!(path = %sys_class_net.display(), "failed to read Linux sysfs network interfaces");
-      return Vec::new();
-   };
+   let entries = fs::read_dir(sys_class_net).map_err(|error| Error::DetectionFailed {
+      message: format!(
+         "failed to read Linux sysfs network interfaces at {}: {error}",
+         sys_class_net.display()
+      ),
+      code: error.raw_os_error(),
+   })?;
 
    let mut connection_types = ConnectionTypes::new();
 
-   for entry in entries.flatten() {
+   for entry in entries {
+      let entry = entry.map_err(|error| Error::DetectionFailed {
+         message: format!(
+            "failed to enumerate Linux sysfs network interfaces at {}: {error}",
+            sys_class_net.display()
+         ),
+         code: error.raw_os_error(),
+      })?;
       let iface = entry.file_name();
       let iface = iface.to_string_lossy();
 
@@ -718,7 +736,7 @@ fn supported_types_from_sysfs(sys_class_net: &Path) -> Vec<ConnectionType> {
       connection_types.insert(infer_transport_from_sysfs(sys_class_net, &iface));
    }
 
-   connection_types.into_vec()
+   Ok(connection_types.into_vec())
 }
 
 fn is_virtual_sysfs_interface(interface_path: &Path) -> bool {
@@ -863,8 +881,43 @@ mod tests {
                "/org/freedesktop/NetworkManager/Devices/3" => Ok(NM_DEVICE_TYPE_WIFI),
                _ => unreachable!(),
             }
-         }),
+         })
+         .unwrap(),
          vec![ConnectionType::Wifi, ConnectionType::Ethernet]
+      );
+   }
+
+   #[test]
+   fn reports_failure_when_no_network_manager_device_can_be_read() {
+      let devices = [
+         OwnedObjectPath::try_from("/org/freedesktop/NetworkManager/Devices/1").unwrap(),
+         OwnedObjectPath::try_from("/org/freedesktop/NetworkManager/Devices/2").unwrap(),
+      ];
+
+      assert!(
+         collect_supported_connection_types_from_devices(devices, |_| {
+            Err::<u32, _>("device disappeared")
+         })
+         .is_err()
+      );
+   }
+
+   #[test]
+   fn reports_failure_when_only_unknown_network_manager_devices_can_be_read() {
+      let devices = [
+         OwnedObjectPath::try_from("/org/freedesktop/NetworkManager/Devices/1").unwrap(),
+         OwnedObjectPath::try_from("/org/freedesktop/NetworkManager/Devices/2").unwrap(),
+      ];
+
+      assert!(
+         collect_supported_connection_types_from_devices(devices, |device| {
+            match device.as_str() {
+               "/org/freedesktop/NetworkManager/Devices/1" => Ok(999),
+               "/org/freedesktop/NetworkManager/Devices/2" => Err("device disappeared"),
+               _ => unreachable!(),
+            }
+         })
+         .is_err()
       );
    }
 
@@ -1115,9 +1168,17 @@ malformed
       unix_fs::symlink(&virtual_iface, temp.path().join("veth0")).unwrap();
 
       assert_eq!(
-         supported_types_from_sysfs(temp.path()),
+         supported_types_from_sysfs(temp.path()).unwrap(),
          vec![ConnectionType::Ethernet]
       );
+   }
+
+   #[test]
+   fn supported_types_from_sysfs_reports_enumeration_failure() {
+      let temp = TempDir::new();
+      let missing_path = temp.path().join("missing");
+
+      assert!(supported_types_from_sysfs(&missing_path).is_err());
    }
 
    #[test]
