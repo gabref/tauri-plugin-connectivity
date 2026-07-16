@@ -1161,15 +1161,27 @@ malformed
       let temp = TempDir::new();
       let physical = temp.path().join("enp0s1");
       let virtual_iface = temp.path().join("virtual").join("net").join("veth0");
-      fs::create_dir_all(&physical).unwrap();
+      fs::create_dir_all(physical.join("wireless")).unwrap();
       fs::create_dir_all(&virtual_iface).unwrap();
-      write_file(physical.join("type"), "1\n");
       write_file(virtual_iface.join("type"), "1\n");
       unix_fs::symlink(&virtual_iface, temp.path().join("veth0")).unwrap();
 
       assert_eq!(
          supported_types_from_sysfs(temp.path()).unwrap(),
-         vec![ConnectionType::Ethernet]
+         vec![ConnectionType::Wifi]
+      );
+   }
+
+   #[test]
+   fn supported_types_from_sysfs_returns_empty_without_transport_signal() {
+      let temp = TempDir::new();
+      let iface = temp.path().join("net0");
+      fs::create_dir_all(&iface).unwrap();
+      write_file(iface.join("type"), "772\n");
+
+      assert_eq!(
+         supported_types_from_sysfs(temp.path()).unwrap(),
+         Vec::<ConnectionType>::new()
       );
    }
 

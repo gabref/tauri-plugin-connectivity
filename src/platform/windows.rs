@@ -553,6 +553,13 @@ mod tests {
    }
 
    #[test]
+   fn returns_empty_when_all_item_queries_succeed_without_items() {
+      let results = [Ok::<Option<(u32, bool)>, u32>(None), Ok(None)];
+
+      assert_eq!(collect_successful_items(results), Ok(Vec::new()));
+   }
+
+   #[test]
    fn keeps_partial_results_when_an_item_query_succeeds() {
       let results = [Err(1168), Ok(Some((71, true)))];
 
