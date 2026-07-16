@@ -25,9 +25,17 @@ const IANA_WWANPP2: u32 = 244;
 const INITIAL_ADAPTER_BUFFER_SIZE: u32 = 15 * 1024;
 const MAX_ADAPTER_QUERY_ATTEMPTS: usize = 3;
 
-// `MIB_IF_ROW2.InterfaceAndOperStatusFlags` stores `HardwareInterface`
-// in its least-significant bit.
+// `MIB_IF_ROW2.InterfaceAndOperStatusFlags` stores `HardwareInterface` in bit 0
+// and `ConnectorPresent` in bit 2. Requiring both follows the structure's
+// semantics for a hardware-backed interface with a physical connector, which
+// excludes hardware-backed virtual miniports that do not expose one.
+// https://learn.microsoft.com/en-us/windows/win32/api/netioapi/ns-netioapi-mib_if_row2
 const HARDWARE_INTERFACE_FLAG: u8 = 1;
+const CONNECTOR_PRESENT_FLAG: u8 = 1 << 2;
+
+fn is_physical_interface(flags: u8) -> bool {
+   flags & HARDWARE_INTERFACE_FLAG != 0 && flags & CONNECTOR_PRESENT_FLAG != 0
+}
 
 fn classify_enumeration_result(
    result: u32,
@@ -274,8 +282,8 @@ fn collect_supported_connection_types_from_adapters(
    collect_supported_connection_types(
       adapters
          .into_iter()
-         .filter_map(|(iana_interface_type, is_hardware)| {
-            is_hardware.then_some(iana_interface_type)
+         .filter_map(|(iana_interface_type, is_physical)| {
+            is_physical.then_some(iana_interface_type)
          }),
    )
 }
@@ -322,7 +330,9 @@ fn adapter_interface_types() -> Result<Vec<(u32, bool)>> {
 
       // IANA interface types alone do not distinguish a physical Ethernet
       // adapter from Ethernet-like virtual adapters. Query the interface row
-      // by LUID and keep only interfaces Windows identifies as hardware-backed:
+      // by LUID and require both `HardwareInterface` and `ConnectorPresent`.
+      // `ConnectorPresent` distinguishes physical adapters from virtual
+      // miniports that can still report themselves as hardware-backed:
       // https://learn.microsoft.com/en-us/windows/win32/api/netioapi/ns-netioapi-mib_if_row2
       let mut interface = MIB_IF_ROW2 {
          InterfaceLuid: adapter_ref.Luid,
@@ -334,28 +344,27 @@ fn adapter_interface_types() -> Result<Vec<(u32, bool)>> {
          warn!(
             code = interface_result.0,
             iana_interface_type = adapter_ref.IfType,
-            "failed to query Windows adapter hardware status; skipping adapter"
+            "failed to query Windows adapter physical status; skipping adapter"
          );
          adapter_results.push(Err(interface_result.0));
          adapter = adapter_ref.Next;
          continue;
       }
 
-      let is_hardware =
-         interface.InterfaceAndOperStatusFlags._bitfield & HARDWARE_INTERFACE_FLAG != 0;
+      let is_physical = is_physical_interface(interface.InterfaceAndOperStatusFlags._bitfield);
 
-      if !is_hardware {
+      if !is_physical {
          debug!(
             iana_interface_type = adapter_ref.IfType,
             "skipping virtual Windows network adapter"
          );
       }
 
-      let is_supported_hardware =
-         is_hardware && map_iana_interface_type(adapter_ref.IfType) != ConnectionType::Unknown;
+      let is_supported_physical =
+         is_physical && map_iana_interface_type(adapter_ref.IfType) != ConnectionType::Unknown;
 
       adapter_results.push(Ok(
-         is_supported_hardware.then_some((adapter_ref.IfType, is_hardware))
+         is_supported_physical.then_some((adapter_ref.IfType, is_physical))
       ));
       adapter = adapter_ref.Next;
    }
@@ -502,6 +511,16 @@ mod tests {
          ]),
          vec![ConnectionType::Wifi]
       );
+   }
+
+   #[test]
+   fn identifies_physical_interfaces_from_status_flags() {
+      assert!(!is_physical_interface(0));
+      assert!(!is_physical_interface(HARDWARE_INTERFACE_FLAG));
+      assert!(!is_physical_interface(CONNECTOR_PRESENT_FLAG));
+      assert!(is_physical_interface(
+         HARDWARE_INTERFACE_FLAG | CONNECTOR_PRESENT_FLAG
+      ));
    }
 
    #[test]
