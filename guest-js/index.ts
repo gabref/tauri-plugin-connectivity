@@ -78,6 +78,8 @@ export async function connectionStatus(): Promise<ConnectionStatus> {
  * On Android, transports not declared as `PackageManager` system features are
  * reported only while currently active.
  */
-export async function supportedConnectionTypes(): Promise<ConnectionType[]> {
-   return invoke<ConnectionType[]>('plugin:connectivity|supported_connection_types');
+export async function supportedConnectionTypes(): Promise<Exclude<ConnectionType, 'unknown'>[]> {
+   return invoke<Exclude<ConnectionType, 'unknown'>[]>(
+      'plugin:connectivity|supported_connection_types'
+   );
 }

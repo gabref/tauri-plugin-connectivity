@@ -52,21 +52,24 @@ class Connectivity(context: Context) {
    }
 
    fun supportedConnectionTypes(): JSObject {
+      val manager = requireNotNull(connectivityManager) {
+         "ConnectivityManager is unavailable"
+      }
+
       // Android does not expose a complete public inventory of inactive
       // removable network hardware. Combine PackageManager's declared system
       // features with currently tracked ConnectivityManager networks:
       // https://developer.android.com/reference/android/content/pm/PackageManager
       // https://developer.android.com/reference/android/net/ConnectivityManager#getAllNetworks()
-      val activeTransportTypes = connectivityManager?.allNetworks
-         ?.mapNotNull { network -> connectivityManager.getNetworkCapabilities(network) }
-         ?.map { capabilities ->
+      val activeTransportTypes = manager.allNetworks
+         .mapNotNull { network -> manager.getNetworkCapabilities(network) }
+         .map { capabilities ->
             AndroidConnectivityMapper.connectionType(
                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI),
                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET),
                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
             )
          }
-         ?: emptyList()
       val connectionTypes = AndroidConnectivityMapper.supportedConnectionTypes(
          hasWifi = packageManager.hasSystemFeature(PackageManager.FEATURE_WIFI),
          hasEthernet = packageManager.hasSystemFeature(PackageManager.FEATURE_ETHERNET),
