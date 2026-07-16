@@ -264,6 +264,10 @@ fn map_iana_interface_type(iana_interface_type: u32) -> ConnectionType {
    }
 }
 
+fn is_supported_interface_type(iana_interface_type: u32) -> bool {
+   map_iana_interface_type(iana_interface_type) != ConnectionType::Unknown
+}
+
 fn collect_supported_connection_types(
    iana_interface_types: impl IntoIterator<Item = u32>,
 ) -> Vec<ConnectionType> {
@@ -315,7 +319,7 @@ fn adapter_interface_types() -> Result<Vec<(u32, bool)>> {
       Ok(true) => {}
       Ok(false) => return Ok(Vec::new()),
       Err(result) => {
-         return Err(Error::DetectionFailed {
+         return Err(Error::SupportedConnectionTypesDetectionFailed {
             message: String::from("GetAdaptersAddresses failed"),
             code: Some(result as i32),
          });
@@ -327,6 +331,18 @@ fn adapter_interface_types() -> Result<Vec<(u32, bool)>> {
 
    while !adapter.is_null() {
       let adapter_ref = unsafe { &*adapter };
+
+      // Unknown interface types cannot contribute a supported transport. Skip
+      // them before querying physical status so a failure on an irrelevant
+      // loopback, tunnel, or other adapter cannot fail detection.
+      if !is_supported_interface_type(adapter_ref.IfType) {
+         debug!(
+            iana_interface_type = adapter_ref.IfType,
+            "skipping unsupported Windows network adapter type"
+         );
+         adapter = adapter_ref.Next;
+         continue;
+      }
 
       // IANA interface types alone do not distinguish a physical Ethernet
       // adapter from Ethernet-like virtual adapters. Query the interface row
@@ -360,18 +376,15 @@ fn adapter_interface_types() -> Result<Vec<(u32, bool)>> {
          );
       }
 
-      let is_supported_physical =
-         is_physical && map_iana_interface_type(adapter_ref.IfType) != ConnectionType::Unknown;
-
-      adapter_results.push(Ok(
-         is_supported_physical.then_some((adapter_ref.IfType, is_physical))
-      ));
+      adapter_results.push(Ok(is_physical.then_some((adapter_ref.IfType, is_physical))));
       adapter = adapter_ref.Next;
    }
 
-   collect_successful_items(adapter_results).map_err(|result| Error::DetectionFailed {
-      message: String::from("GetIfEntry2 failed for every adapter"),
-      code: Some(result as i32),
+   collect_successful_items(adapter_results).map_err(|result| {
+      Error::SupportedConnectionTypesDetectionFailed {
+         message: String::from("GetIfEntry2 failed for every supported adapter"),
+         code: Some(result as i32),
+      }
    })
 }
 
@@ -482,6 +495,14 @@ mod tests {
    #[test]
    fn maps_unrecognized_interface_type_to_unknown() {
       assert_eq!(map_iana_interface_type(999), ConnectionType::Unknown);
+   }
+
+   #[test]
+   fn queries_physical_status_only_for_supported_interface_types() {
+      assert!(is_supported_interface_type(IANA_ETHERNET_CSMACD));
+      assert!(is_supported_interface_type(IANA_IEEE80211));
+      assert!(is_supported_interface_type(IANA_WWANPP));
+      assert!(!is_supported_interface_type(999));
    }
 
    #[test]

@@ -74,9 +74,17 @@ export async function connectionStatus(): Promise<ConnectionStatus> {
  * The result is deduplicated, excludes `'unknown'`, and represents transport
  * classes the device can use rather than the currently selected connection.
  * An empty array means detection succeeded but found no supported transports;
- * the promise rejects when detection fails.
+ * the promise rejects when detection fails before any supported transport can
+ * be recovered. When at least one transport is recovered, the result can be a
+ * best-effort partial inventory if another interface cannot be inspected.
  * On Android, transports not declared as `PackageManager` system features are
  * reported only while currently active.
+ *
+ * @throws Rejects with a string error when the platform is unsupported or when
+ * native transport detection fails. Unsupported platforms use the message
+ * `supported connection type detection is not supported on this platform`;
+ * backend failures use `supported connection type detection failed: ...` or
+ * `supported connection type detection failed with native error code <code>: ...`.
  */
 export async function supportedConnectionTypes(): Promise<Exclude<ConnectionType, 'unknown'>[]> {
    return invoke<Exclude<ConnectionType, 'unknown'>[]>(

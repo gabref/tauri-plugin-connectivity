@@ -31,6 +31,9 @@ impl Connectivity {
    }
 
    /// Returns the supported physical connection transport classes.
+   ///
+   /// When at least one transport is recovered, the returned inventory can be
+   /// a best-effort partial result if another interface cannot be inspected.
    pub fn supported_connection_types(&self) -> Result<Vec<ConnectionType>> {
       debug!("querying supported connection types from plugin state");
       platform::supported_connection_types()
@@ -46,6 +49,9 @@ impl<R: Runtime> Connectivity<R> {
    }
 
    /// Returns the supported physical connection transport classes.
+   ///
+   /// When at least one transport is recovered, the returned inventory can be
+   /// a best-effort partial result if another interface cannot be inspected.
    pub fn supported_connection_types(&self) -> Result<Vec<ConnectionType>> {
       debug!("querying mobile supported connection types from plugin state");
       self.0.supported_connection_types()

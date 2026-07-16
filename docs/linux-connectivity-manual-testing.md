@@ -305,7 +305,7 @@ Expected fallback mapping:
 
 ### End-To-End Example App Check
 
-Run the example app and press the supported-connection-types refresh control.
+Run the example app and press the **Refresh** button.
 The app should show the same deduplicated classes predicted by the terminal
 commands above.
 
@@ -317,11 +317,27 @@ npm run dev
 Expected raw response examples:
 
 ```json
-["wifi", "ethernet"]
+{
+   "status": {
+      "connected": true,
+      "metered": false,
+      "constrained": false,
+      "connectionType": "wifi"
+   },
+   "supportedConnectionTypes": ["wifi", "ethernet"]
+}
 ```
 
 ```json
-["ethernet"]
+{
+   "status": {
+      "connected": true,
+      "metered": false,
+      "constrained": false,
+      "connectionType": "ethernet"
+   },
+   "supportedConnectionTypes": ["ethernet"]
+}
 ```
 
 ## WSL2 Fallback Scenarios

@@ -208,8 +208,10 @@ The `connectionStatus()` function returns a `ConnectionStatus` object:
 The `supportedConnectionTypes()` function returns `ConnectionType[]`. The array
 is deduplicated, excludes `unknown`, and represents physical transport classes
 the device can use rather than the currently preferred connection. An empty
-array means detection succeeded but found no supported transports; detection
-failures reject the promise.
+array means detection succeeded but found no supported transports. Detection
+failures reject the promise when no supported transport can be recovered; when
+at least one transport is recovered, the array can be a best-effort partial
+inventory if another interface cannot be inspected.
 
 | Platform | Mapping |
 | -------- | ------- |

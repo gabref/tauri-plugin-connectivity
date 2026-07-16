@@ -683,49 +683,99 @@ fn route_is_up(flags: &str) -> bool {
 }
 
 fn infer_transport_from_sysfs(sys_class_net: &Path, iface: &str) -> ConnectionType {
+   match try_infer_transport_from_sysfs(sys_class_net, iface) {
+      Ok(connection_type) => connection_type,
+      Err(error) => {
+         warn!(message = %error.message, iface, "failed to classify sysfs fallback interface");
+         ConnectionType::Unknown
+      }
+   }
+}
+
+struct SysfsTransportError {
+   message: String,
+   code: Option<i32>,
+}
+
+fn try_infer_transport_from_sysfs(
+   sys_class_net: &Path,
+   iface: &str,
+) -> std::result::Result<ConnectionType, SysfsTransportError> {
    let interface_path = sys_class_net.join(iface);
 
    if has_wifi_marker(&interface_path) {
       debug!(iface, "sysfs classified fallback interface as Wi-Fi");
-      return ConnectionType::Wifi;
+      return Ok(ConnectionType::Wifi);
    }
 
    if has_wwan_marker(&interface_path) {
       debug!(iface, "sysfs classified fallback interface as cellular");
-      return ConnectionType::Cellular;
+      return Ok(ConnectionType::Cellular);
    }
 
-   if read_u32(interface_path.join("type")).is_some_and(|value| value == LINUX_ARPHRD_ETHER) {
+   let type_path = interface_path.join("type");
+   let interface_type = fs::read_to_string(&type_path).map_err(|error| SysfsTransportError {
+      message: format!(
+         "failed to read Linux sysfs interface type at {}: {error}",
+         type_path.display()
+      ),
+      code: error.raw_os_error(),
+   })?;
+   let interface_type =
+      interface_type
+         .trim()
+         .parse::<u32>()
+         .map_err(|error| SysfsTransportError {
+            message: format!(
+               "failed to parse Linux sysfs interface type at {}: {error}",
+               type_path.display()
+            ),
+            code: None,
+         })?;
+
+   if interface_type == LINUX_ARPHRD_ETHER {
       debug!(iface, "sysfs classified fallback interface as Ethernet");
-      return ConnectionType::Ethernet;
+      return Ok(ConnectionType::Ethernet);
    }
 
    debug!(iface, "sysfs could not classify fallback interface");
-   ConnectionType::Unknown
+   Ok(ConnectionType::Unknown)
 }
 
 fn supported_types_from_sysfs(sys_class_net: &Path) -> Result<Vec<ConnectionType>> {
    // `/sys/class/net` is the kernel's sysfs view of present network interfaces.
    // This fallback is intentionally passive, matching the status fallback above:
    // https://docs.kernel.org/networking/net-sysfs.html
-   let entries = fs::read_dir(sys_class_net).map_err(|error| Error::DetectionFailed {
-      message: format!(
-         "failed to read Linux sysfs network interfaces at {}: {error}",
-         sys_class_net.display()
-      ),
-      code: error.raw_os_error(),
-   })?;
-
-   let mut connection_types = ConnectionTypes::new();
-
-   for entry in entries {
-      let entry = entry.map_err(|error| Error::DetectionFailed {
+   let entries = fs::read_dir(sys_class_net).map_err(|error| {
+      Error::SupportedConnectionTypesDetectionFailed {
          message: format!(
-            "failed to enumerate Linux sysfs network interfaces at {}: {error}",
+            "failed to read Linux sysfs network interfaces at {}: {error}",
             sys_class_net.display()
          ),
          code: error.raw_os_error(),
-      })?;
+      }
+   })?;
+
+   let mut connection_types = ConnectionTypes::new();
+   let mut first_error = None;
+
+   for entry in entries {
+      let entry = match entry {
+         Ok(entry) => entry,
+         Err(error) => {
+            let error = SysfsTransportError {
+               message: format!(
+                  "failed to enumerate Linux sysfs network interfaces at {}: {error}",
+                  sys_class_net.display()
+               ),
+               code: error.raw_os_error(),
+            };
+
+            warn!(message = %error.message, "failed to enumerate supported sysfs interface");
+            first_error.get_or_insert(error);
+            continue;
+         }
+      };
       let iface = entry.file_name();
       let iface = iface.to_string_lossy();
 
@@ -733,10 +783,27 @@ fn supported_types_from_sysfs(sys_class_net: &Path) -> Result<Vec<ConnectionType
          continue;
       }
 
-      connection_types.insert(infer_transport_from_sysfs(sys_class_net, &iface));
+      match try_infer_transport_from_sysfs(sys_class_net, &iface) {
+         Ok(connection_type) => connection_types.insert(connection_type),
+         Err(error) => {
+            warn!(message = %error.message, iface = %iface, "failed to classify supported sysfs interface");
+            first_error.get_or_insert(error);
+         }
+      }
    }
 
-   Ok(connection_types.into_vec())
+   let connection_types = connection_types.into_vec();
+
+   if connection_types.is_empty()
+      && let Some(error) = first_error
+   {
+      return Err(Error::SupportedConnectionTypesDetectionFailed {
+         message: error.message,
+         code: error.code,
+      });
+   }
+
+   Ok(connection_types)
 }
 
 fn is_virtual_sysfs_interface(interface_path: &Path) -> bool {
@@ -773,10 +840,6 @@ fn path_has_exact_component(path: impl AsRef<Path>, marker: &str) -> bool {
          .to_string_lossy()
          .eq_ignore_ascii_case(marker)
    })
-}
-
-fn read_u32(path: impl AsRef<Path>) -> Option<u32> {
-   fs::read_to_string(path).ok()?.trim().parse().ok()
 }
 
 #[cfg(test)]
@@ -1182,6 +1245,44 @@ malformed
       assert_eq!(
          supported_types_from_sysfs(temp.path()).unwrap(),
          Vec::<ConnectionType>::new()
+      );
+   }
+
+   #[test]
+   fn supported_types_from_sysfs_reports_interface_type_failure() {
+      let temp = TempDir::new();
+      let iface = temp.path().join("net0");
+      fs::create_dir_all(&iface).unwrap();
+      write_file(iface.join("type"), "not-an-interface-type\n");
+
+      assert!(matches!(
+         supported_types_from_sysfs(temp.path()),
+         Err(Error::SupportedConnectionTypesDetectionFailed { .. })
+      ));
+   }
+
+   #[test]
+   fn supported_types_from_sysfs_reports_missing_interface_type() {
+      let temp = TempDir::new();
+      fs::create_dir_all(temp.path().join("net0")).unwrap();
+
+      assert!(matches!(
+         supported_types_from_sysfs(temp.path()),
+         Err(Error::SupportedConnectionTypesDetectionFailed { .. })
+      ));
+   }
+
+   #[test]
+   fn supported_types_from_sysfs_returns_partial_results_despite_failure() {
+      let temp = TempDir::new();
+      let wifi = temp.path().join("wlp0s20f3");
+      let unreadable = temp.path().join("net0");
+      fs::create_dir_all(wifi.join("wireless")).unwrap();
+      fs::create_dir_all(unreadable).unwrap();
+
+      assert_eq!(
+         supported_types_from_sysfs(temp.path()).unwrap(),
+         vec![ConnectionType::Wifi]
       );
    }
 

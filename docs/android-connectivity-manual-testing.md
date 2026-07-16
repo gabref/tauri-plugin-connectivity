@@ -168,26 +168,42 @@ network even if that transport is not listed as a system feature.
 
 ### End-To-End Example App Check
 
-Run the example app and press the supported-connection-types refresh control:
+Run the example app and press the **Refresh** button:
 
 ```sh
 cd examples/tauri-app
 npm run tauri android dev
 ```
 
-The raw response should be a deduplicated array without `"unknown"`, ordered as
-Wi-Fi, Ethernet, Cellular.
+The raw response should contain a deduplicated `supportedConnectionTypes` array
+without `"unknown"`, ordered as Wi-Fi, Ethernet, Cellular.
 
 Expected phone example:
 
 ```json
-["wifi", "cellular"]
+{
+   "status": {
+      "connected": true,
+      "metered": false,
+      "constrained": false,
+      "connectionType": "wifi"
+   },
+   "supportedConnectionTypes": ["wifi", "cellular"]
+}
 ```
 
 Expected phone with USB-C Ethernet attached and visible to Android:
 
 ```json
-["wifi", "ethernet", "cellular"]
+{
+   "status": {
+      "connected": true,
+      "metered": false,
+      "constrained": false,
+      "connectionType": "ethernet"
+   },
+   "supportedConnectionTypes": ["wifi", "ethernet", "cellular"]
+}
 ```
 
 If Android does not expose an inactive removable adapter through system features

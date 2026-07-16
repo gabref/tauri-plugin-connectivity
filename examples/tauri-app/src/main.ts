@@ -9,7 +9,8 @@ import './styles.css';
 
 interface ConnectivitySnapshot {
    status: ConnectionStatus;
-   supportedConnectionTypes: ConnectionType[];
+   supportedConnectionTypes: ConnectionType[] | null;
+   supportedConnectionTypesError?: string;
 }
 
 function renderLoading(): void {
@@ -41,11 +42,16 @@ function renderError(error: unknown): void {
 }
 
 function renderSnapshot(snapshot: ConnectivitySnapshot): void {
-   const supportedTypes = snapshot.supportedConnectionTypes
-      .map((connectionType) => {
-         return `<li>${connectionType}</li>`;
-      })
-      .join('');
+   const supportedTypes = snapshot.supportedConnectionTypes === null
+      ? '<li class="muted">unavailable</li>'
+      : snapshot.supportedConnectionTypes
+         .map((connectionType) => {
+            return `<li>${connectionType}</li>`;
+         })
+         .join('') || '<li class="muted">none reported</li>';
+   const supportedTypesError = snapshot.supportedConnectionTypesError
+      ? '<p id="supported-types-error" class="error"></p>'
+      : '';
 
    document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <main class="page">
@@ -73,15 +79,24 @@ function renderSnapshot(snapshot: ConnectivitySnapshot): void {
             <section class="supported-section" aria-labelledby="supported-heading">
                <h2 id="supported-heading">Supported Connection Types</h2>
                <ul class="supported-list">
-                  ${supportedTypes || '<li class="muted">none reported</li>'}
+                  ${supportedTypes}
                </ul>
+               ${supportedTypesError}
             </section>
             <button id="refresh" type="button">Refresh</button>
             <h2>Raw response</h2>
-            <pre>${JSON.stringify(snapshot, null, 3)}</pre>
+            <pre id="raw-response"></pre>
          </section>
       </main>
    `;
+
+   document.querySelector<HTMLPreElement>('#raw-response')!.textContent =
+      JSON.stringify(snapshot, null, 3);
+
+   if (snapshot.supportedConnectionTypesError) {
+      document.querySelector<HTMLParagraphElement>('#supported-types-error')!.textContent =
+         snapshot.supportedConnectionTypesError;
+   }
 
    bindRefresh();
 }
@@ -90,14 +105,23 @@ async function loadConnectivity(): Promise<void> {
    renderLoading();
 
    try {
-      const [ status, supportedTypes ] = await Promise.all([
+      const [ statusResult, supportedTypesResult ] = await Promise.allSettled([
          connectionStatus(),
          supportedConnectionTypes(),
       ]);
 
+      if (statusResult.status === 'rejected') {
+         throw statusResult.reason;
+      }
+
       renderSnapshot({
-         status,
-         supportedConnectionTypes: supportedTypes,
+         status: statusResult.value,
+         supportedConnectionTypes: supportedTypesResult.status === 'fulfilled'
+            ? supportedTypesResult.value
+            : null,
+         ...supportedTypesResult.status === 'rejected'
+            ? { supportedConnectionTypesError: String(supportedTypesResult.reason) }
+            : {},
       });
    } catch(error) {
       renderError(error);

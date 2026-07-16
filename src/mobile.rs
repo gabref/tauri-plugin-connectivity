@@ -55,13 +55,18 @@ impl<R: Runtime> Connectivity<R> {
          let result: MobileSupportedConnectionTypes = self
             .0
             .run_mobile_plugin(COMMAND_SUPPORTED_CONNECTION_TYPES, ())
-            .map_err(crate::Error::from)?;
+            .map_err(
+               |error| crate::Error::SupportedConnectionTypesDetectionFailed {
+                  message: error.to_string(),
+                  code: None,
+               },
+            )?;
          Ok(result.value)
       }
 
       #[cfg(not(target_os = "android"))]
       {
-         Err(crate::Error::Unsupported)
+         Err(crate::Error::SupportedConnectionTypesUnsupported)
       }
    }
 }

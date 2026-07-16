@@ -43,8 +43,11 @@ pub(crate) async fn connection_status<R: Runtime>(_app: AppHandle<R>) -> Result<
 /// Returns the supported physical connection transport classes.
 ///
 /// An empty vector means detection succeeded but found no supported transports.
-/// Detection failures return [`crate::Error::DetectionFailed`].
-/// On platforms without an implementation, this returns [`crate::Error::Unsupported`].
+/// Backends that recover at least one transport can return a best-effort partial
+/// result when another interface cannot be inspected. Detection failures that
+/// prevent recovery return [`crate::Error::SupportedConnectionTypesDetectionFailed`].
+/// On platforms without an implementation, this returns
+/// [`crate::Error::SupportedConnectionTypesUnsupported`].
 #[command]
 pub(crate) async fn supported_connection_types<R: Runtime>(
    _app: AppHandle<R>,
@@ -57,7 +60,7 @@ pub(crate) async fn supported_connection_types<R: Runtime>(
    #[cfg(desktop)]
    let result = tauri::async_runtime::spawn_blocking(platform::supported_connection_types)
       .await
-      .map_err(|error| Error::DetectionFailed {
+      .map_err(|error| Error::SupportedConnectionTypesDetectionFailed {
          message: format!("supported connection types worker failed: {error}"),
          code: None,
       })?;
