@@ -8,11 +8,11 @@ use crate::Error;
 use crate::error::Result;
 #[cfg(desktop)]
 use crate::platform;
-use crate::types::ConnectionStatus;
+use crate::types::{ConnectionStatus, ConnectionType};
 
 /// Returns the current network connection status.
 ///
-/// On platforms without an implementation, this returns [`Error::Unsupported`].
+/// On platforms without an implementation, this returns [`crate::Error::Unsupported`].
 #[command]
 pub(crate) async fn connection_status<R: Runtime>(_app: AppHandle<R>) -> Result<ConnectionStatus> {
    debug!("received frontend request for connection_status");
@@ -35,6 +35,46 @@ pub(crate) async fn connection_status<R: Runtime>(_app: AppHandle<R>) -> Result<
       }
       Err(error) => {
          warn!(%error, "failed to resolve connection status");
+         Err(error)
+      }
+   }
+}
+
+/// Returns the supported physical connection transport classes.
+///
+/// An empty vector means detection succeeded but found no supported transports.
+/// Backends that recover at least one transport can return a best-effort partial
+/// result when another interface cannot be inspected. Detection failures that
+/// prevent recovery return [`crate::Error::SupportedConnectionTypesDetectionFailed`].
+/// On platforms without an implementation, this returns
+/// [`crate::Error::SupportedConnectionTypesUnsupported`].
+#[command]
+pub(crate) async fn supported_connection_types<R: Runtime>(
+   _app: AppHandle<R>,
+) -> Result<Vec<ConnectionType>> {
+   debug!("received frontend request for supported_connection_types");
+
+   #[cfg(mobile)]
+   let result = _app.connectivity().supported_connection_types();
+
+   #[cfg(desktop)]
+   let result = tauri::async_runtime::spawn_blocking(platform::supported_connection_types)
+      .await
+      .map_err(|error| Error::SupportedConnectionTypesDetectionFailed {
+         message: format!("supported connection types worker failed: {error}"),
+         code: None,
+      })?;
+
+   match result {
+      Ok(connection_types) => {
+         debug!(
+            ?connection_types,
+            "returning supported connection types to frontend"
+         );
+         Ok(connection_types)
+      }
+      Err(error) => {
+         warn!(%error, "failed to resolve supported connection types");
          Err(error)
       }
    }

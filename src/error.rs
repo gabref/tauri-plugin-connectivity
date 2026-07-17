@@ -2,7 +2,7 @@ use std::fmt;
 
 use serde::{Serialize, ser::Serializer};
 
-/// Errors that can occur when detecting connection status.
+/// Errors that can occur when detecting connectivity information.
 #[derive(Debug)]
 pub enum Error {
    /// The current platform does not support connection status detection.
@@ -10,6 +10,12 @@ pub enum Error {
 
    /// The platform-specific backend failed while detecting connection status.
    DetectionFailed { message: String, code: Option<i32> },
+
+   /// The current platform cannot enumerate supported connection types.
+   SupportedConnectionTypesUnsupported,
+
+   /// The platform-specific backend failed while enumerating supported connection types.
+   SupportedConnectionTypesDetectionFailed { message: String, code: Option<i32> },
 }
 
 impl fmt::Display for Error {
@@ -32,6 +38,26 @@ impl fmt::Display for Error {
             code: None,
          } => {
             write!(formatter, "connection status detection failed: {message}")
+         }
+         Self::SupportedConnectionTypesUnsupported => formatter
+            .write_str("supported connection type detection is not supported on this platform"),
+         Self::SupportedConnectionTypesDetectionFailed {
+            message,
+            code: Some(code),
+         } => {
+            write!(
+               formatter,
+               "supported connection type detection failed with native error code {code}: {message}"
+            )
+         }
+         Self::SupportedConnectionTypesDetectionFailed {
+            message,
+            code: None,
+         } => {
+            write!(
+               formatter,
+               "supported connection type detection failed: {message}"
+            )
          }
       }
    }
@@ -120,6 +146,43 @@ mod tests {
       assert_eq!(
          json,
          "connection status detection failed with native error code -1: backend unavailable"
+      );
+   }
+
+   #[test]
+   fn supported_connection_types_unsupported_error_displays_message() {
+      let err = Error::SupportedConnectionTypesUnsupported;
+
+      assert_eq!(
+         err.to_string(),
+         "supported connection type detection is not supported on this platform"
+      );
+   }
+
+   #[test]
+   fn supported_connection_types_detection_failed_error_displays_message() {
+      let err = Error::SupportedConnectionTypesDetectionFailed {
+         message: String::from("backend unavailable"),
+         code: None,
+      };
+
+      assert_eq!(
+         err.to_string(),
+         "supported connection type detection failed: backend unavailable"
+      );
+   }
+
+   #[test]
+   fn supported_connection_types_detection_failed_error_serializes_to_string() {
+      let err = Error::SupportedConnectionTypesDetectionFailed {
+         message: String::from("backend unavailable"),
+         code: Some(-1),
+      };
+      let json = serde_json::to_value(&err).unwrap();
+
+      assert_eq!(
+         json,
+         "supported connection type detection failed with native error code -1: backend unavailable"
       );
    }
 
