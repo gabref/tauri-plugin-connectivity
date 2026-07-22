@@ -6,7 +6,7 @@ use dispatch2::{DispatchQueue, DispatchRetained};
 use tracing::warn;
 
 use crate::error::{Error, Result};
-use crate::types::{ConnectionStatus, ConnectionType};
+use crate::types::{ConnectionStatus, ConnectionType, ConnectionTypes};
 
 // Values mirror Apple's `nw_path_status_t` and `nw_interface_type_t` enums
 // from the Network framework headers.
@@ -47,10 +47,17 @@ struct MacosConnectivityMonitor {
    _monitor: NwPathMonitor,
    _queue: DispatchRetained<DispatchQueue>,
    _handler: RcBlock<dyn Fn(NwPath)>,
-   status: Arc<RwLock<Option<ConnectionStatus>>>,
+   cache: Arc<RwLock<Option<CachedConnectivity>>>,
 }
 
-// SAFETY: Rust code only ever reads `status` (already `Send + Sync`); the
+/// Snapshot of the connectivity state derived from the latest reported path.
+#[derive(Clone)]
+struct CachedConnectivity {
+   status: ConnectionStatus,
+   supported_types: Vec<ConnectionType>,
+}
+
+// SAFETY: Rust code only ever reads `cache` (already `Send + Sync`); the
 // remaining fields are only used by the Network framework on its own queue,
 // and the value lives in a static so it is never dropped.
 unsafe impl Send for MacosConnectivityMonitor {}
@@ -74,6 +81,22 @@ pub fn connection_status() -> Result<ConnectionStatus> {
       })
 }
 
+/// Returns the supported transport classes of the last reported path.
+///
+/// Until the first path update lands, the cache is empty and this reports an
+/// empty inventory, matching the disconnected status reported in that window.
+pub fn supported_connection_types() -> Result<Vec<ConnectionType>> {
+   let monitor = MONITOR.get_or_init(create_monitor);
+
+   monitor
+      .as_ref()
+      .map(MacosConnectivityMonitor::supported_connection_types)
+      .ok_or_else(|| Error::SupportedConnectionTypesDetectionFailed {
+         message: String::from("failed to create macOS path monitor"),
+         code: None,
+      })
+}
+
 fn create_monitor() -> Option<MacosConnectivityMonitor> {
    let monitor = unsafe { nw_path_monitor_create() };
    if monitor.is_null() {
@@ -82,14 +105,14 @@ fn create_monitor() -> Option<MacosConnectivityMonitor> {
    }
 
    let queue = DispatchQueue::new("tauri.plugin.connectivity.path", None);
-   let status = Arc::new(RwLock::new(None));
-   let handler_status = Arc::clone(&status);
-   let handler = RcBlock::new(move |path: NwPath| match handler_status.write() {
-      Ok(mut status) => {
-         *status = Some(read_status(path));
+   let cache = Arc::new(RwLock::new(None));
+   let handler_cache = Arc::clone(&cache);
+   let handler = RcBlock::new(move |path: NwPath| match handler_cache.write() {
+      Ok(mut cache) => {
+         *cache = Some(read_connectivity(path));
       }
       Err(error) => {
-         warn!(%error, "failed to update macOS connection status cache");
+         warn!(%error, "failed to update macOS connectivity cache");
       }
    });
 
@@ -103,25 +126,42 @@ fn create_monitor() -> Option<MacosConnectivityMonitor> {
       _monitor: monitor,
       _queue: queue,
       _handler: handler,
-      status,
+      cache,
    })
 }
 
 impl MacosConnectivityMonitor {
    fn current_status(&self) -> ConnectionStatus {
       self
-         .status
+         .cache
          .read()
-         .map(|status| cached_status(status.clone()))
+         .map(|cache| cached_status(cache.clone()))
          .unwrap_or_else(|error| {
             warn!(%error, "failed to read macOS connection status cache");
             ConnectionStatus::disconnected()
          })
    }
+
+   fn supported_connection_types(&self) -> Vec<ConnectionType> {
+      self
+         .cache
+         .read()
+         .map(|cache| cached_supported_types(cache.clone()))
+         .unwrap_or_else(|error| {
+            warn!(%error, "failed to read macOS connectivity cache");
+            Vec::new()
+         })
+   }
 }
 
-fn cached_status(status: Option<ConnectionStatus>) -> ConnectionStatus {
-   status.unwrap_or_else(ConnectionStatus::disconnected)
+fn cached_status(cache: Option<CachedConnectivity>) -> ConnectionStatus {
+   cache
+      .map(|cache| cache.status)
+      .unwrap_or_else(ConnectionStatus::disconnected)
+}
+
+fn cached_supported_types(cache: Option<CachedConnectivity>) -> Vec<ConnectionType> {
+   cache.map(|cache| cache.supported_types).unwrap_or_default()
 }
 
 /// Other interface types (loopback, `nw_interface_type_other`) intentionally
@@ -170,6 +210,36 @@ fn resolve_connection_type(path: NwPath) -> ConnectionType {
       .unwrap_or(ConnectionType::Unknown)
 }
 
+fn resolve_connection_types(path: NwPath) -> Vec<ConnectionType> {
+   // Same `'static` block constraint and poison handling as
+   // `resolve_connection_type`, but every interface is recorded so the
+   // enumeration runs to the end (the block returns 1 to continue).
+   let connection_types = Arc::new(Mutex::new(ConnectionTypes::new()));
+   let connection_types_for_block = Arc::clone(&connection_types);
+   let block = RcBlock::new(move |interface: NwInterface| -> u8 {
+      connection_types_for_block
+         .lock()
+         .unwrap_or_else(|poisoned| poisoned.into_inner())
+         .insert(map_interface_type(unsafe {
+            nw_interface_get_type(interface)
+         }));
+
+      1
+   });
+
+   unsafe {
+      nw_path_enumerate_interfaces(path, &block);
+   }
+
+   let connection_types = std::mem::take(
+      &mut *connection_types
+         .lock()
+         .unwrap_or_else(|poisoned| poisoned.into_inner()),
+   );
+
+   connection_types.into_vec()
+}
+
 /// Apple reports path availability, not whether a specific request will succeed.
 ///
 /// We only treat `nw_path_status_satisfied` as `connected = true`, because that
@@ -188,17 +258,23 @@ fn is_connected_status(status: i32) -> bool {
    status == NW_PATH_STATUS_SATISFIED
 }
 
-fn read_status(path: NwPath) -> ConnectionStatus {
+fn read_connectivity(path: NwPath) -> CachedConnectivity {
    let connected = is_connected_status(unsafe { nw_path_get_status(path) });
    if !connected {
-      return assemble_status(false, false, false, ConnectionType::Unknown);
+      return CachedConnectivity {
+         status: assemble_status(false, false, false, ConnectionType::Unknown),
+         supported_types: Vec::new(),
+      };
    }
 
    let metered = unsafe { nw_path_is_expensive(path) };
    let constrained = unsafe { nw_path_is_constrained(path) };
    let connection_type = resolve_connection_type(path);
 
-   assemble_status(true, metered, constrained, connection_type)
+   CachedConnectivity {
+      status: assemble_status(true, metered, constrained, connection_type),
+      supported_types: resolve_connection_types(path),
+   }
 }
 
 fn assemble_status(
@@ -252,6 +328,24 @@ mod tests {
    #[test]
    fn missing_cached_status_defaults_to_disconnected() {
       assert_eq!(cached_status(None), ConnectionStatus::disconnected());
+   }
+
+   #[test]
+   fn missing_cached_supported_types_defaults_to_empty() {
+      assert!(cached_supported_types(None).is_empty());
+   }
+
+   #[test]
+   fn cached_supported_types_returns_cached_inventory() {
+      let cache = CachedConnectivity {
+         status: ConnectionStatus::disconnected(),
+         supported_types: vec![ConnectionType::Wifi, ConnectionType::Ethernet],
+      };
+
+      assert_eq!(
+         cached_supported_types(Some(cache)),
+         vec![ConnectionType::Wifi, ConnectionType::Ethernet]
+      );
    }
 
    #[test]

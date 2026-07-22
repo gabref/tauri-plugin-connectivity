@@ -10,6 +10,10 @@ private struct ConnectionStatusPayload: Encodable {
    let connectionType: ConnectionType
 }
 
+private struct SupportedConnectionTypesPayload: Encodable {
+   let value: [ConnectionType]
+}
+
 class ConnectivityPlugin: Plugin {
    private let monitor = NWPathMonitor()
    private let monitorQueue = DispatchQueue(label: "tauri.plugin.connectivity.path")
@@ -42,16 +46,7 @@ class ConnectivityPlugin: Plugin {
    }
 
    @objc public func connectionStatus(_ invoke: Invoke) throws {
-      // The first pathUpdateHandler callback is delivered asynchronously after
-      // start(), so on an early call latestPath may still be nil. Briefly wait
-      // for that first update rather than immediately falling back to
-      // `monitor.currentPath`, which may report `.requiresConnection` in that
-      // window and under-report connectivity. The wait is bounded so the
-      // calling thread never blocks indefinitely.
-      if stateQueue.sync(execute: { latestPath }) == nil {
-         _ = firstPathSemaphore.wait(timeout: .now() + Self.firstPathTimeout)
-      }
-      let path = stateQueue.sync { latestPath } ?? monitor.currentPath
+      let path = currentPath()
       let connectionType = Self.resolveConnectionType(path)
 
       invoke.resolve(ConnectionStatusPayload(
@@ -60,6 +55,32 @@ class ConnectivityPlugin: Plugin {
          constrained: path.isConstrained,
          connectionType: connectionType
       ))
+   }
+
+   @objc public func supportedConnectionTypes(_ invoke: Invoke) throws {
+      let path = currentPath()
+      let supportedTypes = path.status == .satisfied
+         ? IosConnectivityMapper.supportedConnectionTypes(
+            hasWifi: path.usesInterfaceType(.wifi),
+            hasEthernet: path.usesInterfaceType(.wiredEthernet),
+            hasCellular: path.usesInterfaceType(.cellular)
+         )
+         : []
+
+      invoke.resolve(SupportedConnectionTypesPayload(value: supportedTypes))
+   }
+
+   // The first pathUpdateHandler callback is delivered asynchronously after
+   // start(), so on an early call latestPath may still be nil. Briefly wait
+   // for that first update rather than immediately falling back to
+   // `monitor.currentPath`, which may report `.requiresConnection` in that
+   // window and under-report connectivity. The wait is bounded so the
+   // calling thread never blocks indefinitely.
+   private func currentPath() -> NWPath {
+      if stateQueue.sync(execute: { latestPath }) == nil {
+         _ = firstPathSemaphore.wait(timeout: .now() + Self.firstPathTimeout)
+      }
+      return stateQueue.sync { latestPath } ?? monitor.currentPath
    }
 
    // Adapter over `IosConnectivityMapper`

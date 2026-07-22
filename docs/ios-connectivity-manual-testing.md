@@ -41,6 +41,8 @@ swift test
 | Low Data Mode | Not tested | `constrained: true` |
 | USB / Thunderbolt Ethernet | Not tested | `connectionType: "ethernet"` |
 | Connectivity check immediately on launch | Not tested | first call reflects the real path, not an early `.requiresConnection` snapshot |
+| Supported transport classes on Wi-Fi + Cellular | Not tested | `supportedConnectionTypes()` returns `["wifi", "cellular"]` |
+| Supported transport classes in Airplane Mode | Not tested | `supportedConnectionTypes()` returns `[]` |
 
 ## Base Test Setup
 
@@ -158,3 +160,19 @@ Expected response:
 The first `connectionStatus()` call briefly waits (bounded, 200 ms) for that
 update so it does not under-report connectivity from an early
 `.requiresConnection` snapshot of `monitor.currentPath`.
+
+### Supported Connection Types
+
+1. Connect Wi-Fi and keep cellular data enabled.
+2. Run or refresh the example app.
+
+Expected `supportedConnectionTypes()` response:
+
+```json
+["wifi", "cellular"]
+```
+
+The array is built by `IosConnectivityMapper.supportedConnectionTypes` from
+`NWPath.usesInterfaceType(_:)` on the current satisfied path, so it lists only
+transports of the active path and omits `unknown`. In Airplane Mode the path
+is not satisfied and the array is empty.

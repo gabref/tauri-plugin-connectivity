@@ -217,14 +217,17 @@ inventory if another interface cannot be inspected.
 | -------- | ------- |
 | Windows  | Present hardware-backed adapters from Win32 `GetAdaptersAddresses()` and `GetIfEntry2()` mapped by IANA interface type |
 | Linux    | NetworkManager realized `Devices` mapped by `DeviceType`; sysfs fallback when NetworkManager is unavailable |
-| macOS    | Unsupported for this API |
-| iOS      | Unsupported for this API |
+| macOS    | Interfaces of the current satisfied `NWPath` mapped by `nw_interface_get_type()` |
+| iOS      | `NWPath.usesInterfaceType(_:)` on the current satisfied path |
 | Android  | `PackageManager` hardware features plus current `ConnectivityManager` networks |
 
 Android does not expose a complete public SDK inventory of inactive removable
 network adapters. Transports that are not declared as `PackageManager` system
 features are reported only while Android exposes them as currently active
 through `ConnectivityManager`.
+
+On macOS and iOS, the array reflects the interfaces of the current network
+path reported by `NWPathMonitor`, so inactive transports are not listed.
 
 #### Platform mapping
 
