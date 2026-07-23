@@ -40,9 +40,12 @@ pub(crate) async fn connection_status<R: Runtime>(_app: AppHandle<R>) -> Result<
    }
 }
 
-/// Returns the supported physical connection transport classes.
+/// Returns the connection transport classes reported by the platform backend.
 ///
 /// An empty vector means detection succeeded but found no supported transports.
+/// The meaning is platform-specific: Apple backends report interfaces available
+/// to the current satisfied path, while other backends can report present
+/// hardware or currently visible networks.
 /// Backends that recover at least one transport can return a best-effort partial
 /// result when another interface cannot be inspected. Detection failures that
 /// prevent recovery return [`crate::Error::SupportedConnectionTypesDetectionFailed`].

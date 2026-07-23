@@ -15,7 +15,7 @@ decisions.
 ## Features
 
    * Detect connection type (WiFi, Ethernet, Cellular)
-   * Query supported physical transport classes for policy settings
+   * Query platform-reported transport classes for policy settings
    * Query metered and constrained status for network policy decisions
    * Check internet reachability
    * Cross-platform support (Windows, Linux, macOS, iOS, Android)
@@ -75,6 +75,12 @@ cargo test --workspace --lib
 See [Linux Connectivity Manual Testing](docs/linux-connectivity-manual-testing.md)
 for WSL2, VirtualBox, NetworkManager, ModemManager, metered, constrained, and
 transport-type test scenarios.
+
+### Manual macOS scenario testing
+
+See [macOS Connectivity Manual Testing](docs/macos-connectivity-manual-testing.md)
+for current-path transport inventory, disconnected, VPN, metered, and
+constrained scenarios.
 
 ## Install
 
@@ -159,9 +165,9 @@ async function shouldDownload(): Promise<boolean> {
 #### Query supported transport classes
 
 Use `supportedConnectionTypes()` when the app needs to show policy settings for
-transport classes the device can use. On Android, transports declared as
-`PackageManager` system features are reported even when inactive; other
-transports are reported only while currently active:
+transport classes reported by the current platform backend. On Android,
+transports declared as `PackageManager` system features are reported even when
+inactive; other transports are reported only while currently active:
 
 ```ts
 import { supportedConnectionTypes } from '@silvermine/tauri-plugin-connectivity';
@@ -206,19 +212,19 @@ The `connectionStatus()` function returns a `ConnectionStatus` object:
 ### Supported Connection Types
 
 The `supportedConnectionTypes()` function returns `ConnectionType[]`. The array
-is deduplicated, excludes `unknown`, and represents physical transport classes
-the device can use rather than the currently preferred connection. An empty
-array means detection succeeded but found no supported transports. Detection
-failures reject the promise when no supported transport can be recovered; when
-at least one transport is recovered, the array can be a best-effort partial
-inventory if another interface cannot be inspected.
+is deduplicated and excludes `unknown`. Its availability semantics are
+platform-specific, as described below. An empty array means detection succeeded
+but found no supported transports. Detection failures reject the promise when
+no supported transport can be recovered; when at least one transport is
+recovered, the array can be a best-effort partial inventory if another
+interface cannot be inspected.
 
 | Platform | Mapping |
 | -------- | ------- |
 | Windows  | Present hardware-backed adapters from Win32 `GetAdaptersAddresses()` and `GetIfEntry2()` mapped by IANA interface type |
 | Linux    | NetworkManager realized `Devices` mapped by `DeviceType`; sysfs fallback when NetworkManager is unavailable |
 | macOS    | Interfaces of the current satisfied `NWPath` mapped by `nw_interface_get_type()` |
-| iOS      | `NWPath.usesInterfaceType(_:)` on the current satisfied path |
+| iOS      | Interfaces of the current satisfied `NWPath.availableInterfaces` mapped by `NWInterface.InterfaceType` |
 | Android  | `PackageManager` hardware features plus current `ConnectivityManager` networks |
 
 Android does not expose a complete public SDK inventory of inactive removable
@@ -236,7 +242,7 @@ path reported by `NWPathMonitor`, so inactive transports are not listed.
 | `connected`      | `InternetAccess` or `ConstrainedInternetAccess`                                     | NetworkManager `FULL`/`PORTAL`/`LIMITED` or up IPv4/IPv6 default route fallback | `nw_path_get_status == satisfied`              | `NWPath.status` satisfied   | `NET_CAPABILITY_INTERNET`          |
 | `metered`        | `NetworkCostType` Unknown/Fixed/Variable                                            | NetworkManager primary device `Metered`           | `nw_path_is_expensive`                         | `NWPath.isExpensive`        | absence of `NOT_METERED`           |
 | `constrained`    | `ConstrainedInternetAccess`, data-limit, roaming, or background data restrictions   | NetworkManager portal/limited/metered or cellular roaming; fallback defaults to `false` | `nw_path_is_constrained`                       | `NWPath.isConstrained`      | missing `VALIDATED`, or Data Saver / `RESTRICT_BACKGROUND` on a metered active network |
-| `connectionType` | WWAN/WLAN/IANA interface type                                                       | NetworkManager device type or sysfs fallback      | `nw_path_uses_interface_type`                  | `NWInterface.InterfaceType` | `TRANSPORT_*` capabilities         |
+| `connectionType` | WWAN/WLAN/IANA interface type                                                       | NetworkManager device type or sysfs fallback      | First `nw_path_enumerate_interfaces` entry     | `NWPath.usesInterfaceType(_:)` priority | `TRANSPORT_*` capabilities         |
 
 ## Development Standards
 

@@ -43,6 +43,7 @@ swift test
 | Connectivity check immediately on launch | Not tested | first call reflects the real path, not an early `.requiresConnection` snapshot |
 | Supported transport classes on Wi-Fi + Cellular | Not tested | `supportedConnectionTypes()` returns `["wifi", "cellular"]` |
 | Supported transport classes in Airplane Mode | Not tested | `supportedConnectionTypes()` returns `[]` |
+| VPN over Wi-Fi | Not tested | connected; transport can be `unknown` and supported types can be empty when only the tunnel is exposed |
 
 ## Base Test Setup
 
@@ -173,6 +174,18 @@ Expected `supportedConnectionTypes()` response:
 ```
 
 The array is built by `IosConnectivityMapper.supportedConnectionTypes` from
-`NWPath.usesInterfaceType(_:)` on the current satisfied path, so it lists only
-transports of the active path and omits `unknown`. In Airplane Mode the path
-is not satisfied and the array is empty.
+the interface types in `NWPath.availableInterfaces` on the current satisfied
+path, so it lists only transports available to that path and omits `unknown`.
+In Airplane Mode the path is not satisfied and the array is empty.
+
+### VPN Over Wi-Fi
+
+1. Connect the device to Wi-Fi.
+2. Enable a VPN that routes all traffic through its tunnel.
+3. Run or refresh the example app.
+
+The path can expose only the VPN tunnel as `.other`, hiding the underlying
+Wi-Fi interface. In that case the connection remains usable, but
+`connectionType` is `"unknown"` and `supportedConnectionTypes()` returns `[]`.
+The empty array describes the interfaces visible on the current path; it does
+not mean the physical Wi-Fi link is unavailable.

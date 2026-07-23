@@ -45,7 +45,7 @@ impl<R: Runtime> Connectivity<R> {
          .map_err(Into::into)
    }
 
-   /// Returns the supported physical connection transport classes.
+   /// Returns the connection transport classes reported by the mobile backend.
    pub fn supported_connection_types(&self) -> crate::Result<Vec<ConnectionType>> {
       let result: MobileSupportedConnectionTypes = self
          .0

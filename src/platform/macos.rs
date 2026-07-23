@@ -175,54 +175,33 @@ fn map_interface_type(interface_type: i32) -> ConnectionType {
    }
 }
 
-fn resolve_connection_type(path: NwPath) -> ConnectionType {
+struct ResolvedConnectionTypes {
+   primary: Option<ConnectionType>,
+   supported: ConnectionTypes,
+}
+
+fn resolve_connection_types(path: NwPath) -> (ConnectionType, Vec<ConnectionType>) {
    // Enumeration is synchronous, but the block must be `'static`, so the value
    // is shared back out through an `Arc`. The lock can only be poisoned by a
    // panic while held, which cannot happen here, so poison is recovered rather
    // than treated as an error.
-   let first_type = Arc::new(Mutex::new(None::<i32>));
-   let first_type_for_block = Arc::clone(&first_type);
+   let resolved_types = Arc::new(Mutex::new(ResolvedConnectionTypes {
+      primary: None,
+      supported: ConnectionTypes::new(),
+   }));
+   let resolved_types_for_block = Arc::clone(&resolved_types);
    let block = RcBlock::new(move |interface: NwInterface| -> u8 {
-      let mut first_type = first_type_for_block
+      let connection_type = map_interface_type(unsafe { nw_interface_get_type(interface) });
+      let mut resolved_types = resolved_types_for_block
          .lock()
          .unwrap_or_else(|poisoned| poisoned.into_inner());
 
       // Path interfaces are enumerated in order of preference, so the first
-      // interface is the OS-selected primary transport. Record only that one
-      // and stop the enumeration.
-      if first_type.is_none() {
-         *first_type = Some(unsafe { nw_interface_get_type(interface) });
+      // interface is the OS-selected primary transport.
+      if resolved_types.primary.is_none() {
+         resolved_types.primary = Some(connection_type);
       }
-
-      0
-   });
-
-   unsafe {
-      nw_path_enumerate_interfaces(path, &block);
-   }
-
-   let first_type = *first_type
-      .lock()
-      .unwrap_or_else(|poisoned| poisoned.into_inner());
-
-   first_type
-      .map(map_interface_type)
-      .unwrap_or(ConnectionType::Unknown)
-}
-
-fn resolve_connection_types(path: NwPath) -> Vec<ConnectionType> {
-   // Same `'static` block constraint and poison handling as
-   // `resolve_connection_type`, but every interface is recorded so the
-   // enumeration runs to the end (the block returns 1 to continue).
-   let connection_types = Arc::new(Mutex::new(ConnectionTypes::new()));
-   let connection_types_for_block = Arc::clone(&connection_types);
-   let block = RcBlock::new(move |interface: NwInterface| -> u8 {
-      connection_types_for_block
-         .lock()
-         .unwrap_or_else(|poisoned| poisoned.into_inner())
-         .insert(map_interface_type(unsafe {
-            nw_interface_get_type(interface)
-         }));
+      resolved_types.supported.insert(connection_type);
 
       1
    });
@@ -231,13 +210,14 @@ fn resolve_connection_types(path: NwPath) -> Vec<ConnectionType> {
       nw_path_enumerate_interfaces(path, &block);
    }
 
-   let connection_types = std::mem::take(
-      &mut *connection_types
-         .lock()
-         .unwrap_or_else(|poisoned| poisoned.into_inner()),
-   );
+   let mut resolved_types = resolved_types
+      .lock()
+      .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-   connection_types.into_vec()
+   (
+      resolved_types.primary.unwrap_or(ConnectionType::Unknown),
+      std::mem::take(&mut resolved_types.supported).into_vec(),
+   )
 }
 
 /// Apple reports path availability, not whether a specific request will succeed.
@@ -269,11 +249,11 @@ fn read_connectivity(path: NwPath) -> CachedConnectivity {
 
    let metered = unsafe { nw_path_is_expensive(path) };
    let constrained = unsafe { nw_path_is_constrained(path) };
-   let connection_type = resolve_connection_type(path);
+   let (connection_type, supported_types) = resolve_connection_types(path);
 
    CachedConnectivity {
       status: assemble_status(true, metered, constrained, connection_type),
-      supported_types: resolve_connection_types(path),
+      supported_types,
    }
 }
 
