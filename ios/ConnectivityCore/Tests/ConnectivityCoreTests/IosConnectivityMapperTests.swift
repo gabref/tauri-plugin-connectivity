@@ -75,6 +75,28 @@ final class IosConnectivityMapperTests: XCTestCase {
       )
    }
 
+   func testSupportedConnectionTypesListsOnlyEthernet() {
+      XCTAssertEqual(
+         IosConnectivityMapper.supportedConnectionTypes(
+            hasWifi: false,
+            hasEthernet: true,
+            hasCellular: false
+         ),
+         [.ethernet]
+      )
+   }
+
+   func testSupportedConnectionTypesListsOnlyCellular() {
+      XCTAssertEqual(
+         IosConnectivityMapper.supportedConnectionTypes(
+            hasWifi: false,
+            hasEthernet: false,
+            hasCellular: true
+         ),
+         [.cellular]
+      )
+   }
+
    func testSupportedConnectionTypesIsEmptyWhenNoKnownInterfaceIsPresent() {
       XCTAssertEqual(
          IosConnectivityMapper.supportedConnectionTypes(
