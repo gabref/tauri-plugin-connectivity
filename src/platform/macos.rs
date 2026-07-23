@@ -175,9 +175,27 @@ fn map_interface_type(interface_type: i32) -> ConnectionType {
    }
 }
 
+#[derive(Default)]
 struct ResolvedConnectionTypes {
    primary: Option<ConnectionType>,
    supported: ConnectionTypes,
+}
+
+impl ResolvedConnectionTypes {
+   fn record(&mut self, connection_type: ConnectionType) {
+      if self.primary.is_none() {
+         self.primary = Some(connection_type);
+      }
+
+      self.supported.insert(connection_type);
+   }
+
+   fn into_parts(self) -> (ConnectionType, Vec<ConnectionType>) {
+      (
+         self.primary.unwrap_or(ConnectionType::Unknown),
+         self.supported.into_vec(),
+      )
+   }
 }
 
 fn resolve_connection_types(path: NwPath) -> (ConnectionType, Vec<ConnectionType>) {
@@ -198,10 +216,7 @@ fn resolve_connection_types(path: NwPath) -> (ConnectionType, Vec<ConnectionType
 
       // Path interfaces are enumerated in order of preference, so the first
       // interface is the OS-selected primary transport.
-      if resolved_types.primary.is_none() {
-         resolved_types.primary = Some(connection_type);
-      }
-      resolved_types.supported.insert(connection_type);
+      resolved_types.record(connection_type);
 
       1
    });
@@ -214,10 +229,7 @@ fn resolve_connection_types(path: NwPath) -> (ConnectionType, Vec<ConnectionType
       .lock()
       .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-   (
-      resolved_types.primary.unwrap_or(ConnectionType::Unknown),
-      std::mem::take(&mut resolved_types.supported).into_vec(),
-   )
+   std::mem::take(&mut *resolved_types).into_parts()
 }
 
 /// Apple reports path availability, not whether a specific request will succeed.
@@ -325,6 +337,59 @@ mod tests {
       assert_eq!(
          cached_supported_types(Some(cache)),
          vec![ConnectionType::Wifi, ConnectionType::Ethernet]
+      );
+   }
+
+   #[test]
+   fn resolved_connection_types_preserves_first_type_as_primary() {
+      let mut resolved_types = ResolvedConnectionTypes::default();
+
+      resolved_types.record(ConnectionType::Ethernet);
+      resolved_types.record(ConnectionType::Wifi);
+
+      assert_eq!(
+         resolved_types.into_parts(),
+         (
+            ConnectionType::Ethernet,
+            vec![ConnectionType::Wifi, ConnectionType::Ethernet],
+         )
+      );
+   }
+
+   #[test]
+   fn resolved_connection_types_accumulates_and_deduplicates_supported_types() {
+      let mut resolved_types = ResolvedConnectionTypes::default();
+
+      resolved_types.record(ConnectionType::Ethernet);
+      resolved_types.record(ConnectionType::Wifi);
+      resolved_types.record(ConnectionType::Ethernet);
+
+      let (_, supported_types) = resolved_types.into_parts();
+
+      assert_eq!(
+         supported_types,
+         vec![ConnectionType::Wifi, ConnectionType::Ethernet]
+      );
+   }
+
+   #[test]
+   fn resolved_connection_types_keeps_unknown_primary_but_omits_it_from_supported() {
+      let mut resolved_types = ResolvedConnectionTypes::default();
+
+      resolved_types.record(ConnectionType::Unknown);
+      resolved_types.record(ConnectionType::Wifi);
+
+      assert_eq!(
+         resolved_types.into_parts(),
+         (ConnectionType::Unknown, vec![ConnectionType::Wifi])
+      );
+   }
+
+   #[test]
+   fn resolved_connection_types_defaults_when_empty() {
+      assert_eq!(
+         ResolvedConnectionTypes::default().into_parts(),
+         (ConnectionType::Unknown, Vec::new())
       );
    }
 
