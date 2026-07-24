@@ -70,6 +70,25 @@ Run Rust tests only:
 cargo test --workspace --lib
 ```
 
+Run the Swift tests for the iOS connectivity mapper (requires macOS and a Swift
+toolchain):
+
+```bash
+swift test --package-path ios/ConnectivityCore
+```
+
+Run the Kotlin tests for the Android connectivity mapper (requires a JDK 17+ and
+the Android SDK):
+
+```bash
+cd android && ./gradlew :lib:test
+```
+
+The Swift and Kotlin tests cover the platform mapping logic, which lives in
+modules that do not depend on the Tauri mobile APIs
+(`ios/ConnectivityCore` and `android/lib`) so the suites can run without an
+emulator, a simulator, or a Tauri app build.
+
 ### Manual Linux scenario testing
 
 See [Linux Connectivity Manual Testing](docs/linux-connectivity-manual-testing.md)
