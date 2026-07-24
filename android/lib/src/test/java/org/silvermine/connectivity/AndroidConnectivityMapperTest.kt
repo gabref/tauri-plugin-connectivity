@@ -1,4 +1,4 @@
-package org.silvermine.plugin.connectivity
+package org.silvermine.connectivity
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
