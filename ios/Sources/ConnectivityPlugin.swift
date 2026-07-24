@@ -10,27 +10,32 @@ private struct ConnectionStatusPayload: Encodable {
    let connectionType: ConnectionType
 }
 
+private struct SupportedConnectionTypesPayload: Encodable {
+   let value: [ConnectionType]
+}
+
 class ConnectivityPlugin: Plugin {
    private let monitor = NWPathMonitor()
    private let monitorQueue = DispatchQueue(label: "tauri.plugin.connectivity.path")
    private let stateQueue = DispatchQueue(label: "tauri.plugin.connectivity.state")
    private var latestPath: NWPath?
-   private let firstPathSemaphore = DispatchSemaphore(value: 0)
-   private var hasSignalledFirstPath = false
+   private let firstPathGroup = DispatchGroup()
+   private var hasReceivedFirstPath = false
 
-   // Upper bound on how long the first connectionStatus() call waits for the
+   // Upper bound on how long an early command waits for the
    // initial NWPathMonitor update before falling back to monitor.currentPath.
    private static let firstPathTimeout: DispatchTimeInterval = .milliseconds(200)
 
    override init() {
       super.init()
+      firstPathGroup.enter()
       monitor.pathUpdateHandler = { [weak self] path in
          guard let self else { return }
          self.stateQueue.async {
             self.latestPath = path
-            if !self.hasSignalledFirstPath {
-               self.hasSignalledFirstPath = true
-               self.firstPathSemaphore.signal()
+            if !self.hasReceivedFirstPath {
+               self.hasReceivedFirstPath = true
+               self.firstPathGroup.leave()
             }
          }
       }
@@ -41,17 +46,9 @@ class ConnectivityPlugin: Plugin {
       monitor.cancel()
    }
 
+   /// Returns the current network connection status.
    @objc public func connectionStatus(_ invoke: Invoke) throws {
-      // The first pathUpdateHandler callback is delivered asynchronously after
-      // start(), so on an early call latestPath may still be nil. Briefly wait
-      // for that first update rather than immediately falling back to
-      // `monitor.currentPath`, which may report `.requiresConnection` in that
-      // window and under-report connectivity. The wait is bounded so the
-      // calling thread never blocks indefinitely.
-      if stateQueue.sync(execute: { latestPath }) == nil {
-         _ = firstPathSemaphore.wait(timeout: .now() + Self.firstPathTimeout)
-      }
-      let path = stateQueue.sync { latestPath } ?? monitor.currentPath
+      let path = resolveCurrentPath()
       let connectionType = Self.resolveConnectionType(path)
 
       invoke.resolve(ConnectionStatusPayload(
@@ -60,6 +57,34 @@ class ConnectivityPlugin: Plugin {
          constrained: path.isConstrained,
          connectionType: connectionType
       ))
+   }
+
+   /// Returns the transport classes available to the current network path.
+   @objc public func supportedConnectionTypes(_ invoke: Invoke) throws {
+      let path = resolveCurrentPath()
+      let availableInterfaces = path.availableInterfaces
+      let supportedTypes = path.status == .satisfied
+         ? IosConnectivityMapper.supportedConnectionTypes(
+            hasWifi: availableInterfaces.contains { $0.type == .wifi },
+            hasEthernet: availableInterfaces.contains { $0.type == .wiredEthernet },
+            hasCellular: availableInterfaces.contains { $0.type == .cellular }
+         )
+         : []
+
+      invoke.resolve(SupportedConnectionTypesPayload(value: supportedTypes))
+   }
+
+   // The first pathUpdateHandler callback is delivered asynchronously after
+   // start(), so on an early call latestPath may still be nil. Briefly wait
+   // for that first update rather than immediately falling back to
+   // `monitor.currentPath`, which may report `.requiresConnection` in that
+   // window and under-report connectivity. The wait is bounded so the
+   // calling thread never blocks indefinitely.
+   private func resolveCurrentPath() -> NWPath {
+      if stateQueue.sync(execute: { latestPath }) == nil {
+         _ = firstPathGroup.wait(timeout: .now() + Self.firstPathTimeout)
+      }
+      return stateQueue.sync { latestPath } ?? monitor.currentPath
    }
 
    // Adapter over `IosConnectivityMapper`

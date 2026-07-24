@@ -1,4 +1,3 @@
-#[cfg(target_os = "android")]
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use tauri::plugin::{PluginApi, PluginHandle};
@@ -12,10 +11,8 @@ const PLUGIN_IDENTIFIER: &str = "org.silvermine.plugin.connectivity";
 tauri::ios_plugin_binding!(init_plugin_connectivity);
 
 const COMMAND_CONNECTION_STATUS: &str = "connectionStatus";
-#[cfg(target_os = "android")]
 const COMMAND_SUPPORTED_CONNECTION_TYPES: &str = "supportedConnectionTypes";
 
-#[cfg(target_os = "android")]
 #[derive(Debug, Deserialize)]
 struct MobileSupportedConnectionTypes {
    value: Vec<ConnectionType>,
@@ -48,25 +45,17 @@ impl<R: Runtime> Connectivity<R> {
          .map_err(Into::into)
    }
 
-   /// Returns the supported physical connection transport classes.
+   /// Returns the connection transport classes reported by the mobile backend.
    pub fn supported_connection_types(&self) -> crate::Result<Vec<ConnectionType>> {
-      #[cfg(target_os = "android")]
-      {
-         let result: MobileSupportedConnectionTypes = self
-            .0
-            .run_mobile_plugin(COMMAND_SUPPORTED_CONNECTION_TYPES, ())
-            .map_err(
-               |error| crate::Error::SupportedConnectionTypesDetectionFailed {
-                  message: error.to_string(),
-                  code: None,
-               },
-            )?;
-         Ok(result.value)
-      }
-
-      #[cfg(not(target_os = "android"))]
-      {
-         Err(crate::Error::SupportedConnectionTypesUnsupported)
-      }
+      let result: MobileSupportedConnectionTypes = self
+         .0
+         .run_mobile_plugin(COMMAND_SUPPORTED_CONNECTION_TYPES, ())
+         .map_err(
+            |error| crate::Error::SupportedConnectionTypesDetectionFailed {
+               message: error.to_string(),
+               code: None,
+            },
+         )?;
+      Ok(result.value)
    }
 }

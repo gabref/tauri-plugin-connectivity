@@ -20,10 +20,10 @@ pub enum ConnectionType {
    Unknown,
 }
 
-/// Internal helper used by the Linux and Windows backends to deduplicate
-/// supported transport classes in stable API order. Android constructs this
-/// list in native Kotlin, while macOS and iOS do not support this query yet.
-#[cfg(any(target_os = "linux", target_os = "windows", test))]
+/// Internal helper used by the Linux, macOS, and Windows backends to deduplicate
+/// supported transport classes in stable API order. Android and iOS construct
+/// this list in native Kotlin and Swift instead.
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 #[derive(Debug, Default)]
 pub(crate) struct ConnectionTypes {
    wifi: bool,
@@ -31,7 +31,7 @@ pub(crate) struct ConnectionTypes {
    cellular: bool,
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 impl ConnectionTypes {
    pub(crate) fn new() -> Self {
       Self::default()

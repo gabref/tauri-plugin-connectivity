@@ -69,10 +69,12 @@ export async function connectionStatus(): Promise<ConnectionStatus> {
 }
 
 /**
- * Returns the supported physical connection transport classes for this device.
+ * Returns the connection transport classes reported by the platform backend.
  *
- * The result is deduplicated, excludes `'unknown'`, and represents transport
- * classes the device can use rather than the currently selected connection.
+ * The result is deduplicated and excludes `'unknown'`. On Apple platforms it
+ * contains interfaces available to the current satisfied path, so inactive
+ * transports are not listed. Other platforms can report present hardware or
+ * currently visible networks.
  * An empty array means detection succeeded but found no supported transports;
  * the promise rejects when detection fails before any supported transport can
  * be recovered. When at least one transport is recovered, the result can be a
