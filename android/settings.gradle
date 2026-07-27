@@ -13,6 +13,9 @@ pluginManagement {
                 case "org.jetbrains.kotlin.android":
                     useVersion("2.1.0")
                     break
+                case "org.jetbrains.kotlin.jvm":
+                    useVersion("2.1.0")
+                    break
             }
         }
     }
@@ -29,3 +32,5 @@ dependencyResolutionManagement {
 
 include ':tauri-android'
 project(':tauri-android').projectDir = new File('./.tauri/tauri-api')
+
+include ':lib'
