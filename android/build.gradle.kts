@@ -32,7 +32,9 @@ android {
     }
 }
 
-if (findProject(":lib") != null) {
+// Match on the project directory as well as the path: a consuming Tauri app may
+// have its own `:lib` module.
+if (findProject(":lib")?.projectDir == file("lib")) {
     // Standalone build: depend on :lib as a separate module so its unit tests
     // can run on the JVM without the Android framework or the Tauri Android API.
     dependencies {
