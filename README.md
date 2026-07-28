@@ -28,6 +28,20 @@ decisions.
 | Android  | Yes       |
 | iOS      | Yes       |
 
+## Architecture
+
+The Rust implementation is split into two crates:
+
+   * `connectivity` (`crates/connectivity`) is Tauri-independent and contains
+     the Windows, Linux, and macOS detection backends, public models, and errors.
+   * `tauri-plugin-connectivity` (the repository root) is the thin Tauri layer.
+     It provides commands, managed state, permissions, and the Android/iOS
+     native plugin bridge.
+
+Desktop Rust code that does not need Tauri can depend on `connectivity`
+directly. The Tauri plugin consumes the same crate and re-exports its public
+models and error types.
+
 ## Getting Started
 
 ### Installation
@@ -216,6 +230,26 @@ fn check_connection<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
    }
 }
 ```
+
+#### Use the standalone desktop crate from Rust
+
+Add the Tauri-independent workspace crate directly when connectivity detection
+is needed outside the plugin:
+
+```toml
+[dependencies]
+connectivity = { git = "https://github.com/silvermine/tauri-plugin-connectivity" }
+```
+
+```rust
+fn check_connection() -> connectivity::Result<bool> {
+   let status = connectivity::connection_status()?;
+   Ok(status.connected && !status.metered && !status.constrained)
+}
+```
+
+The desktop detection calls are synchronous. Async applications should run
+them on a blocking worker thread.
 
 ### Connection Status
 

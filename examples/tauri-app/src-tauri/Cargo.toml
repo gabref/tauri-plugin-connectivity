@@ -15,4 +15,5 @@ tauri-build = { version = "2.5.6", features = [] }
 [dependencies]
 tauri = { version = "2.9.3", features = [] }
 tauri-plugin-connectivity = { path = "../../../" }
+tracing = { version = "0.1.41", features = ["release_max_level_warn"] }
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "fmt"] }

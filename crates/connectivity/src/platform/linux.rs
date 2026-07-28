@@ -114,7 +114,7 @@ impl ConnectionDetails {
 /// NetworkManager is preferred when available because it exposes cached
 /// connectivity, primary-route, transport, and metered state over D-Bus. Systems
 /// without NetworkManager fall back to passive kernel state only.
-pub fn connection_status() -> Result<ConnectionStatus> {
+pub(crate) fn connection_status() -> Result<ConnectionStatus> {
    debug!("querying Linux connection status");
 
    let connection = match system_bus_connection() {
@@ -158,7 +158,7 @@ pub fn connection_status() -> Result<ConnectionStatus> {
 }
 
 /// Returns the supported physical connection transport classes.
-pub fn supported_connection_types() -> Result<Vec<ConnectionType>> {
+pub(crate) fn supported_connection_types() -> Result<Vec<ConnectionType>> {
    debug!("querying Linux supported connection types");
 
    // Prefer NetworkManager's realized `Devices` list. Its D-Bus docs describe

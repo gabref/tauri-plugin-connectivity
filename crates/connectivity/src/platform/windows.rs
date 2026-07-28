@@ -83,7 +83,7 @@ fn collect_successful_items<T, E>(
 /// device-wide network. We query that profile and derive connectivity, cost, and
 /// transport information from the resulting
 /// [`ConnectionProfile`](https://learn.microsoft.com/en-us/uwp/api/windows.networking.connectivity.connectionprofile?view=winrt-28000).
-pub fn connection_status() -> Result<ConnectionStatus> {
+pub(crate) fn connection_status() -> Result<ConnectionStatus> {
    debug!("querying Windows internet connection profile");
 
    let profile = match NetworkInformation::GetInternetConnectionProfile() {
@@ -150,7 +150,7 @@ pub fn connection_status() -> Result<ConnectionStatus> {
 }
 
 /// Returns the supported physical connection transport classes.
-pub fn supported_connection_types() -> Result<Vec<ConnectionType>> {
+pub(crate) fn supported_connection_types() -> Result<Vec<ConnectionType>> {
    debug!("querying Windows supported connection types");
 
    // Use Win32 adapter enumeration rather than WinRT connection profiles:
