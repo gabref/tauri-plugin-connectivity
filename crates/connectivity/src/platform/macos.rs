@@ -69,7 +69,7 @@ unsafe impl Sync for MacosConnectivityMonitor {}
 /// starting with an initial update shortly after `nw_path_monitor_start`.
 /// Until that first update lands, the cache is empty and this reports disconnected.
 /// Either way, re-check at the decision point rather than relying on earlier results.
-pub fn connection_status() -> Result<ConnectionStatus> {
+pub(crate) fn connection_status() -> Result<ConnectionStatus> {
    let monitor = MONITOR.get_or_init(create_monitor);
 
    monitor
@@ -85,7 +85,7 @@ pub fn connection_status() -> Result<ConnectionStatus> {
 ///
 /// Until the first path update lands, the cache is empty and this reports an
 /// empty inventory, matching the disconnected status reported in that window.
-pub fn supported_connection_types() -> Result<Vec<ConnectionType>> {
+pub(crate) fn supported_connection_types() -> Result<Vec<ConnectionType>> {
    let monitor = MONITOR.get_or_init(create_monitor);
 
    monitor
