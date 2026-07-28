@@ -1,21 +1,16 @@
 mod commands;
-mod error;
 #[cfg(mobile)]
 mod mobile;
-#[cfg(desktop)]
-mod platform;
-mod types;
 
-pub use error::{Error, Result};
-pub use types::{ConnectionStatus, ConnectionType};
+pub use connectivity::{ConnectionStatus, ConnectionType, Error, Result};
 
 use tauri::{Manager, Runtime, plugin::TauriPlugin};
 use tracing::debug;
 
 /// Provides connectivity detection for the current platform.
 ///
-/// This is the Rust-side API for querying connection status. Platform-specific
-/// implementations will be added behind this interface.
+/// This is the Tauri-managed wrapper around the standalone `connectivity`
+/// crate's desktop detection APIs.
 #[cfg(desktop)]
 pub struct Connectivity;
 
@@ -27,7 +22,7 @@ impl Connectivity {
    /// Returns the current network connection status.
    pub fn connection_status(&self) -> Result<ConnectionStatus> {
       debug!("querying connectivity status from plugin state");
-      platform::connection_status()
+      connectivity::connection_status()
    }
 
    /// Returns the connection transport classes reported by the platform.
@@ -37,7 +32,7 @@ impl Connectivity {
    /// A recovered inventory can be a best-effort partial result.
    pub fn supported_connection_types(&self) -> Result<Vec<ConnectionType>> {
       debug!("querying supported connection types from plugin state");
-      platform::supported_connection_types()
+      connectivity::supported_connection_types()
    }
 }
 
@@ -115,8 +110,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             // asynchronously, so this does not guarantee a populated cache on
             // return — it ensures the update has normally landed long before
             // the webview loads and the frontend makes its first call. Until
-            // then, reads report disconnected (see `platform::macos`).
-            let _ = platform::connection_status();
+            // then, reads report disconnected (see the macOS connectivity backend).
+            let _ = connectivity::connection_status();
          }
 
          #[cfg(mobile)]

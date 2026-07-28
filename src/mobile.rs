@@ -1,9 +1,10 @@
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use tauri::plugin::mobile::PluginInvokeError;
 use tauri::plugin::{PluginApi, PluginHandle};
 use tauri::{AppHandle, Runtime};
 
-use crate::types::{ConnectionStatus, ConnectionType};
+use crate::{ConnectionStatus, ConnectionType};
 
 #[cfg(target_os = "android")]
 const PLUGIN_IDENTIFIER: &str = "org.silvermine.plugin.connectivity";
@@ -18,15 +19,26 @@ struct MobileSupportedConnectionTypes {
    value: Vec<ConnectionType>,
 }
 
+fn detection_error(error: PluginInvokeError) -> crate::Error {
+   crate::Error::DetectionFailed {
+      message: error.to_string(),
+      code: None,
+   }
+}
+
 /// Initializes the Rust-side bridge to the native mobile plugin.
 pub fn init<R: Runtime, C: DeserializeOwned>(
    _app: &AppHandle<R>,
    api: PluginApi<R, C>,
 ) -> crate::Result<Connectivity<R>> {
    #[cfg(target_os = "android")]
-   let handle = api.register_android_plugin(PLUGIN_IDENTIFIER, "ConnectivityPlugin")?;
+   let handle = api
+      .register_android_plugin(PLUGIN_IDENTIFIER, "ConnectivityPlugin")
+      .map_err(detection_error)?;
    #[cfg(target_os = "ios")]
-   let handle = api.register_ios_plugin(init_plugin_connectivity)?;
+   let handle = api
+      .register_ios_plugin(init_plugin_connectivity)
+      .map_err(detection_error)?;
 
    Ok(Connectivity(handle))
 }
@@ -42,7 +54,7 @@ impl<R: Runtime> Connectivity<R> {
       self
          .0
          .run_mobile_plugin(COMMAND_CONNECTION_STATUS, ())
-         .map_err(Into::into)
+         .map_err(detection_error)
    }
 
    /// Returns the connection transport classes reported by the mobile backend.

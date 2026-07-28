@@ -5,10 +5,7 @@ use tracing::{debug, warn};
 use crate::ConnectivityExt;
 #[cfg(desktop)]
 use crate::Error;
-use crate::error::Result;
-#[cfg(desktop)]
-use crate::platform;
-use crate::types::{ConnectionStatus, ConnectionType};
+use crate::{ConnectionStatus, ConnectionType, Result};
 
 /// Returns the current network connection status.
 ///
@@ -21,7 +18,7 @@ pub(crate) async fn connection_status<R: Runtime>(_app: AppHandle<R>) -> Result<
    let result = _app.connectivity().connection_status();
 
    #[cfg(desktop)]
-   let result = tauri::async_runtime::spawn_blocking(platform::connection_status)
+   let result = tauri::async_runtime::spawn_blocking(connectivity::connection_status)
       .await
       .map_err(|error| Error::DetectionFailed {
          message: format!("connection status worker failed: {error}"),
@@ -61,7 +58,7 @@ pub(crate) async fn supported_connection_types<R: Runtime>(
    let result = _app.connectivity().supported_connection_types();
 
    #[cfg(desktop)]
-   let result = tauri::async_runtime::spawn_blocking(platform::supported_connection_types)
+   let result = tauri::async_runtime::spawn_blocking(connectivity::supported_connection_types)
       .await
       .map_err(|error| Error::SupportedConnectionTypesDetectionFailed {
          message: format!("supported connection types worker failed: {error}"),
