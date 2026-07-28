@@ -476,6 +476,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "connectivity"
+version = "0.1.0"
+dependencies = [
+ "block2",
+ "dispatch2",
+ "serde",
+ "tracing",
+ "windows 0.62.2",
+ "zbus",
+]
+
+[[package]]
 name = "convert_case"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3660,6 +3672,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-connectivity",
+ "tracing",
  "tracing-subscriber",
 ]
 
@@ -3747,16 +3760,11 @@ dependencies = [
 name = "tauri-plugin-connectivity"
 version = "0.1.0"
 dependencies = [
- "block2",
- "dispatch2",
+ "connectivity",
  "serde",
- "serde_json",
  "tauri",
  "tauri-plugin",
- "thiserror 2.0.18",
  "tracing",
- "windows 0.62.2",
- "zbus",
 ]
 
 [[package]]

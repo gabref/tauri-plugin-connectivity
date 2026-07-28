@@ -17,7 +17,7 @@ exclude = ["/examples", "/dist-js", "/guest-js", "/node_modules"]
 connectivity = { path = "crates/connectivity" }
 serde = { version = "1.0.228", features = ["derive"] }
 tauri = { version = "2.9.3" }
-tracing = { version = "0.1.41", default-features = false, features = ["std", "log", "release_max_level_warn"] }
+tracing = { version = "0.1.41", default-features = false, features = ["std", "log"] }
 
 [build-dependencies]
 tauri-plugin = { version = "2.5.1", features = ["build"] }
