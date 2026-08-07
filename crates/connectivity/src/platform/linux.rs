@@ -268,8 +268,12 @@ fn network_manager_connection_status(connection: &Connection) -> zbus::Result<Co
 
    Ok(ConnectionStatus {
       connected: true,
-      metered: details.metered,
-      constrained: is_constrained(connectivity_state, details.metered, details.roaming),
+      metered: Some(details.metered),
+      constrained: Some(is_constrained(
+         connectivity_state,
+         details.metered,
+         details.roaming,
+      )),
       connection_type: details.connection_type,
    })
 }
@@ -514,25 +518,37 @@ fn fallback_connection_status() -> ConnectionStatus {
       }
    };
 
-   let Some(iface) = default_ipv4_route_interface(&ipv4_route_table)
-      .or_else(|| default_ipv6_route_interface(&ipv6_route_table))
+   fallback_connection_status_from_routes(
+      &ipv4_route_table,
+      &ipv6_route_table,
+      Path::new(SYS_CLASS_NET),
+   )
+}
+
+fn fallback_connection_status_from_routes(
+   ipv4_route_table: &str,
+   ipv6_route_table: &str,
+   sys_class_net: &Path,
+) -> ConnectionStatus {
+   let Some(iface) = default_ipv4_route_interface(ipv4_route_table)
+      .or_else(|| default_ipv6_route_interface(ipv6_route_table))
    else {
       debug!("Linux route table does not contain an up, non-loopback default route");
       return ConnectionStatus::disconnected();
    };
 
-   let connection_type = infer_transport_from_sysfs(Path::new(SYS_CLASS_NET), &iface);
+   let connection_type = infer_transport_from_sysfs(sys_class_net, &iface);
    let status = ConnectionStatus {
       connected: true,
-      metered: false,
-      constrained: false,
+      metered: None,
+      constrained: None,
       connection_type,
    };
 
    debug!(
       iface,
       connection_type = ?status.connection_type,
-      "resolved Linux connection status via passive fallback"
+      "resolved Linux connection status via passive fallback without cost information"
    );
 
    status
@@ -1030,6 +1046,25 @@ eth0\t00000000\t015018AC\t0003\t0\t0\t0\t00000000\t0\t0\t0
          default_ipv4_route_interface(route_table),
          Some("eth0".into())
       );
+   }
+
+   #[test]
+   fn passive_fallback_reports_unknown_policy_flags() {
+      let temp = TempDir::new();
+      let iface = temp.path().join("eth0");
+      fs::create_dir_all(&iface).unwrap();
+      write_file(iface.join("type"), "1\n");
+      let route_table = "\
+Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT
+eth0\t00000000\t015018AC\t0003\t0\t0\t0\t00000000\t0\t0\t0
+";
+
+      let status = fallback_connection_status_from_routes(route_table, "", temp.path());
+
+      assert!(status.connected);
+      assert_eq!(status.metered, None);
+      assert_eq!(status.constrained, None);
+      assert_eq!(status.connection_type, ConnectionType::Ethernet);
    }
 
    #[test]

@@ -133,16 +133,16 @@ pub(crate) fn connection_status() -> Result<ConnectionStatus> {
 
    let status = ConnectionStatus {
       connected: true,
-      metered: is_metered(cost_type),
-      constrained,
+      metered: Some(is_metered(cost_type)),
+      constrained: Some(constrained),
       connection_type,
    };
 
    debug!(
       ?cost_type,
-      constrained = status.constrained,
+      constrained = ?status.constrained,
       connection_type = ?status.connection_type,
-      metered = status.metered,
+      metered = ?status.metered,
       "resolved Windows connection status"
    );
 

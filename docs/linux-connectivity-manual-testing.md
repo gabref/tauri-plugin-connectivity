@@ -57,7 +57,9 @@ constrained = network_manager_connectivity_is_portal_or_limited
    || modem_manager_reports_roaming
 ```
 
-The passive fallback always reports `metered: false` and `constrained: false`.
+The passive fallback reports `metered: None` and `constrained: None` to Rust
+callers because kernel route tables do not expose either policy signal. The
+JavaScript command preserves its boolean API by mapping both values to `false`.
 
 ## Base Test Setup
 

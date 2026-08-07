@@ -1,3 +1,4 @@
+use serde::Serialize;
 use tauri::{AppHandle, Runtime, command};
 use tracing::{debug, warn};
 
@@ -7,11 +8,35 @@ use crate::ConnectivityExt;
 use crate::Error;
 use crate::{ConnectionStatus, ConnectionType, Result};
 
+/// Frontend compatibility response. The Rust API exposes unknown policy flags
+/// as `None`, while the existing JavaScript API keeps its boolean fallback.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FrontendConnectionStatus {
+   connected: bool,
+   metered: bool,
+   constrained: bool,
+   connection_type: ConnectionType,
+}
+
+impl From<ConnectionStatus> for FrontendConnectionStatus {
+   fn from(status: ConnectionStatus) -> Self {
+      Self {
+         connected: status.connected,
+         metered: status.metered.unwrap_or(false),
+         constrained: status.constrained.unwrap_or(false),
+         connection_type: status.connection_type,
+      }
+   }
+}
+
 /// Returns the current network connection status.
 ///
 /// On platforms without an implementation, this returns [`crate::Error::Unsupported`].
 #[command]
-pub(crate) async fn connection_status<R: Runtime>(_app: AppHandle<R>) -> Result<ConnectionStatus> {
+pub(crate) async fn connection_status<R: Runtime>(
+   _app: AppHandle<R>,
+) -> Result<FrontendConnectionStatus> {
    debug!("received frontend request for connection_status");
 
    #[cfg(mobile)]
@@ -28,12 +53,47 @@ pub(crate) async fn connection_status<R: Runtime>(_app: AppHandle<R>) -> Result<
    match result {
       Ok(status) => {
          debug!(?status, "returning connection status to frontend");
-         Ok(status)
+         Ok(status.into())
       }
       Err(error) => {
          warn!(%error, "failed to resolve connection status");
          Err(error)
       }
+   }
+}
+
+#[cfg(test)]
+mod tests {
+   use super::*;
+
+   #[test]
+   fn frontend_status_preserves_known_policy_flags() {
+      let status = FrontendConnectionStatus::from(ConnectionStatus {
+         connected: true,
+         metered: Some(true),
+         constrained: Some(false),
+         connection_type: ConnectionType::Cellular,
+      });
+
+      assert!(status.connected);
+      assert!(status.metered);
+      assert!(!status.constrained);
+      assert_eq!(status.connection_type, ConnectionType::Cellular);
+   }
+
+   #[test]
+   fn frontend_status_maps_unknown_policy_flags_to_false() {
+      let status = FrontendConnectionStatus::from(ConnectionStatus {
+         connected: true,
+         metered: None,
+         constrained: None,
+         connection_type: ConnectionType::Ethernet,
+      });
+
+      assert!(status.connected);
+      assert!(!status.metered);
+      assert!(!status.constrained);
+      assert_eq!(status.connection_type, ConnectionType::Ethernet);
    }
 }
 

@@ -244,12 +244,17 @@ connectivity = { git = "https://github.com/silvermine/tauri-plugin-connectivity"
 ```rust
 fn check_connection() -> connectivity::Result<bool> {
    let status = connectivity::connection_status()?;
-   Ok(status.connected && !status.metered && !status.constrained)
+   Ok(status.connected
+      && status.metered == Some(false)
+      && status.constrained == Some(false))
 }
 ```
 
 The desktop detection calls are synchronous. Async applications should run
-them on a blocking worker thread.
+them on a blocking worker thread. The Rust-facing `metered` and `constrained`
+fields are `Option<bool>`; `None` means the backend could not determine the
+value. Restrictive policies should require `Some(false)` rather than treating
+an unknown value as safe.
 
 ### Connection Status
 
@@ -261,6 +266,11 @@ The `connectionStatus()` function returns a `ConnectionStatus` object:
 | `metered`        | `boolean`        | Whether data usage is billed or limited                           |
 | `constrained`    | `boolean`        | Whether the connection is data-constrained or restricted          |
 | `connectionType` | `ConnectionType` | The physical transport: `wifi`, `ethernet`, `cellular`, `unknown` |
+
+The JavaScript fields remain booleans for compatibility. When the Rust backend
+cannot determine `metered` or `constrained`, the command response maps that
+unknown value to `false`. Rust callers can use the tri-state fields directly
+when they need to fail closed.
 
 ### Supported Connection Types
 
@@ -293,8 +303,8 @@ path reported by `NWPathMonitor`, so inactive transports are not listed.
 | Field            | Windows                                                                             | Linux                                             | macOS                                          | iOS                         | Android                            |
 | ---------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------- | --------------------------- | ---------------------------------- |
 | `connected`      | `InternetAccess` or `ConstrainedInternetAccess`                                     | NetworkManager `FULL`/`PORTAL`/`LIMITED` or up IPv4/IPv6 default route fallback | `nw_path_get_status == satisfied`              | `NWPath.status` satisfied   | `NET_CAPABILITY_INTERNET`          |
-| `metered`        | `NetworkCostType` Unknown/Fixed/Variable                                            | NetworkManager primary device `Metered`           | `nw_path_is_expensive`                         | `NWPath.isExpensive`        | absence of `NOT_METERED`           |
-| `constrained`    | `ConstrainedInternetAccess`, data-limit, roaming, or background data restrictions   | NetworkManager portal/limited/metered or cellular roaming; fallback defaults to `false` | `nw_path_is_constrained`                       | `NWPath.isConstrained`      | missing `VALIDATED`, or Data Saver / `RESTRICT_BACKGROUND` on a metered active network |
+| `metered`        | `NetworkCostType` Unknown/Fixed/Variable                                            | NetworkManager primary device `Metered`; passive fallback is unknown in Rust and `false` in JavaScript | `nw_path_is_expensive`                         | `NWPath.isExpensive`        | absence of `NOT_METERED`           |
+| `constrained`    | `ConstrainedInternetAccess`, data-limit, roaming, or background data restrictions   | NetworkManager portal/limited/metered or cellular roaming; passive fallback is unknown in Rust and `false` in JavaScript | `nw_path_is_constrained`                       | `NWPath.isConstrained`      | missing `VALIDATED`, or Data Saver / `RESTRICT_BACKGROUND` on a metered active network |
 | `connectionType` | WWAN/WLAN/IANA interface type                                                       | NetworkManager device type or sysfs fallback      | First `nw_path_enumerate_interfaces` entry     | `NWPath.usesInterfaceType(_:)` priority | `TRANSPORT_*` capabilities         |
 
 ## Development Standards
