@@ -144,7 +144,7 @@ impl DetectedConnectionStatus {
       }
    }
 
-   #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+   #[cfg(any(target_os = "linux", target_os = "windows"))]
    pub(crate) fn with_unknown_fallbacks(
       status: ConnectionStatus,
       unknown_metered_fallback: bool,
