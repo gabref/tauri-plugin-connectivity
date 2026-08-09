@@ -11,7 +11,7 @@ use windows::Win32::NetworkManagement::IpHelper::{
 use windows::Win32::Networking::WinSock::AF_UNSPEC;
 
 use crate::error::{Error, Result};
-use crate::types::{ConnectionStatus, ConnectionType, ConnectionTypes};
+use crate::types::{ConnectionStatus, ConnectionType, ConnectionTypes, DetectedConnectionStatus};
 
 /// [`IanaInterfaceType`](https://www.iana.org/assignments/ianaiftype-mib/ianaiftype-mib) values.
 /// IANA interface type for Ethernet-like interfaces (`ethernetCsmacd`).
@@ -83,14 +83,16 @@ fn collect_successful_items<T, E>(
 /// device-wide network. We query that profile and derive connectivity, cost, and
 /// transport information from the resulting
 /// [`ConnectionProfile`](https://learn.microsoft.com/en-us/uwp/api/windows.networking.connectivity.connectionprofile?view=winrt-28000).
-pub(crate) fn connection_status() -> Result<ConnectionStatus> {
+pub(crate) fn connection_status() -> Result<DetectedConnectionStatus> {
    debug!("querying Windows internet connection profile");
 
    let profile = match NetworkInformation::GetInternetConnectionProfile() {
       Ok(profile) => profile,
       Err(error) if is_missing_profile_error(&error) => {
          debug!("Windows did not return an internet connection profile");
-         return Ok(ConnectionStatus::disconnected());
+         return Ok(DetectedConnectionStatus::known(
+            ConnectionStatus::disconnected(),
+         ));
       }
       Err(error) => {
          warn!(%error, "failed to query Windows internet connection profile");
@@ -112,7 +114,9 @@ pub(crate) fn connection_status() -> Result<ConnectionStatus> {
          connectivity_level = ?connectivity_level,
          "connectivity level does not indicate internet or constrained access"
       );
-      return Ok(ConnectionStatus::disconnected());
+      return Ok(DetectedConnectionStatus::known(
+         ConnectionStatus::disconnected(),
+      ));
    }
 
    let connection_cost = profile
@@ -133,7 +137,7 @@ pub(crate) fn connection_status() -> Result<ConnectionStatus> {
 
    let status = ConnectionStatus {
       connected: true,
-      metered: Some(is_metered(cost_type)),
+      metered: metered_status(cost_type),
       constrained: Some(constrained),
       connection_type,
    };
@@ -146,7 +150,11 @@ pub(crate) fn connection_status() -> Result<ConnectionStatus> {
       "resolved Windows connection status"
    );
 
-   Ok(status)
+   Ok(DetectedConnectionStatus::with_unknown_fallbacks(
+      status,
+      legacy_metered_status(cost_type),
+      constrained,
+   ))
 }
 
 /// Returns the supported physical connection transport classes.
@@ -191,9 +199,19 @@ fn has_network_connectivity(connectivity_level: NetworkConnectivityLevel) -> boo
 
 /// Windows reports metering through
 /// [`ConnectionCost`](https://learn.microsoft.com/en-us/uwp/api/windows.networking.connectivity.connectioncost?view=winrt-28000).
-/// We treat unknown, fixed-cost, and variable-cost plans as metered, and only
-/// explicit unrestricted plans as not metered.
-fn is_metered(cost_type: NetworkCostType) -> bool {
+/// Fixed-cost and variable-cost plans are metered, unrestricted plans are not,
+/// and `Unknown` means Windows did not provide enough cost information.
+fn metered_status(cost_type: NetworkCostType) -> Option<bool> {
+   match cost_type {
+      NetworkCostType::Unrestricted => Some(false),
+      NetworkCostType::Fixed | NetworkCostType::Variable => Some(true),
+      _ => None,
+   }
+}
+
+/// Preserves the boolean cost mapping exposed to JavaScript before the Rust API
+/// gained an explicit unknown state.
+fn legacy_metered_status(cost_type: NetworkCostType) -> bool {
    matches!(
       cost_type,
       NetworkCostType::Unknown | NetworkCostType::Fixed | NetworkCostType::Variable
@@ -442,11 +460,19 @@ mod tests {
    }
 
    #[test]
-   fn identifies_metered_cost_types() {
-      assert!(is_metered(NetworkCostType::Unknown));
-      assert!(!is_metered(NetworkCostType::Unrestricted));
-      assert!(is_metered(NetworkCostType::Fixed));
-      assert!(is_metered(NetworkCostType::Variable));
+   fn maps_metered_cost_types_without_collapsing_unknown() {
+      assert_eq!(metered_status(NetworkCostType::Unknown), None);
+      assert_eq!(metered_status(NetworkCostType::Unrestricted), Some(false));
+      assert_eq!(metered_status(NetworkCostType::Fixed), Some(true));
+      assert_eq!(metered_status(NetworkCostType::Variable), Some(true));
+   }
+
+   #[test]
+   fn preserves_legacy_metered_cost_mapping() {
+      assert!(legacy_metered_status(NetworkCostType::Unknown));
+      assert!(!legacy_metered_status(NetworkCostType::Unrestricted));
+      assert!(legacy_metered_status(NetworkCostType::Fixed));
+      assert!(legacy_metered_status(NetworkCostType::Variable));
    }
 
    #[test]

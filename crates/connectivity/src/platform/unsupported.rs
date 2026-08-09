@@ -1,9 +1,9 @@
 use crate::error::{Error, Result};
-use crate::types::{ConnectionStatus, ConnectionType};
+use crate::types::{ConnectionType, DetectedConnectionStatus};
 use tracing::warn;
 
 /// Returns [`Error::Unsupported`] until a platform-specific implementation is added.
-pub(crate) fn connection_status() -> Result<ConnectionStatus> {
+pub(crate) fn connection_status() -> Result<DetectedConnectionStatus> {
    warn!("connection status detection is not supported on this platform");
    Err(Error::Unsupported)
 }

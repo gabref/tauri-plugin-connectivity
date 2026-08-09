@@ -267,10 +267,11 @@ The `connectionStatus()` function returns a `ConnectionStatus` object:
 | `constrained`    | `boolean`        | Whether the connection is data-constrained or restricted          |
 | `connectionType` | `ConnectionType` | The physical transport: `wifi`, `ethernet`, `cellular`, `unknown` |
 
-The JavaScript fields remain booleans for compatibility. When the Rust backend
-cannot determine `metered` or `constrained`, the command response maps that
-unknown value to `false`. Rust callers can use the tri-state fields directly
-when they need to fail closed.
+The JavaScript fields remain booleans and preserve their existing platform
+fallbacks for compatibility. For example, Windows unknown cost remains `true`,
+Linux's passive fallback remains `false`, and Linux policy-read failures that
+previously failed closed remain `true`. Rust callers can use the tri-state
+fields directly when they need to distinguish an unknown value.
 
 ### Supported Connection Types
 
@@ -303,8 +304,8 @@ path reported by `NWPathMonitor`, so inactive transports are not listed.
 | Field            | Windows                                                                             | Linux                                             | macOS                                          | iOS                         | Android                            |
 | ---------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------- | --------------------------- | ---------------------------------- |
 | `connected`      | `InternetAccess` or `ConstrainedInternetAccess`                                     | NetworkManager `FULL`/`PORTAL`/`LIMITED` or up IPv4/IPv6 default route fallback | `nw_path_get_status == satisfied`              | `NWPath.status` satisfied   | `NET_CAPABILITY_INTERNET`          |
-| `metered`        | `NetworkCostType` Unknown/Fixed/Variable                                            | NetworkManager primary device `Metered`; passive fallback is unknown in Rust and `false` in JavaScript | `nw_path_is_expensive`                         | `NWPath.isExpensive`        | absence of `NOT_METERED`           |
-| `constrained`    | `ConstrainedInternetAccess`, data-limit, roaming, or background data restrictions   | NetworkManager portal/limited/metered or cellular roaming; passive fallback is unknown in Rust and `false` in JavaScript | `nw_path_is_constrained`                       | `NWPath.isConstrained`      | missing `VALIDATED`, or Data Saver / `RESTRICT_BACKGROUND` on a metered active network |
+| `metered`        | `NetworkCostType` Fixed/Variable; Unknown is `None` in Rust and retains the legacy `true` in JavaScript | NetworkManager primary device `Metered`; unknown/unavailable signals are `None` in Rust and retain their source-specific legacy JavaScript fallback | `nw_path_is_expensive`                         | `NWPath.isExpensive`        | absence of `NOT_METERED`           |
+| `constrained`    | `ConstrainedInternetAccess`, data-limit, roaming, or background data restrictions   | NetworkManager portal/limited/metered or cellular roaming; unknown/unavailable signals are `None` in Rust and retain their source-specific legacy JavaScript fallback | `nw_path_is_constrained`                       | `NWPath.isConstrained`      | missing `VALIDATED`, or Data Saver / `RESTRICT_BACKGROUND_STATUS` on a metered active network |
 | `connectionType` | WWAN/WLAN/IANA interface type                                                       | NetworkManager device type or sysfs fallback      | First `nw_path_enumerate_interfaces` entry     | `NWPath.usesInterfaceType(_:)` priority | `TRANSPORT_*` capabilities         |
 
 ## Development Standards

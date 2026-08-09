@@ -12,7 +12,7 @@ use zbus::proxy::CacheProperties;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 
 use crate::error::{Error, Result};
-use crate::types::{ConnectionStatus, ConnectionType, ConnectionTypes};
+use crate::types::{ConnectionStatus, ConnectionType, ConnectionTypes, DetectedConnectionStatus};
 
 // These local D-Bus calls read cached service state and normally complete within
 // milliseconds. Bound each call so a stalled service cannot occupy the blocking
@@ -39,8 +39,9 @@ const NETWORK_MANAGER_ACTIVE_CONNECTION_INTERFACE: &str =
    "org.freedesktop.NetworkManager.Connection.Active";
 const NETWORK_MANAGER_DEVICE_INTERFACE: &str = "org.freedesktop.NetworkManager.Device";
 
-// ModemManager is only used for cellular roaming. Missing service, missing 3GPP
-// interface, and read errors are treated as no roaming signal.
+// ModemManager is only used for cellular roaming. A missing service or 3GPP
+// interface, an unknown registration state, and read errors leave the roaming
+// signal unknown.
 // https://www.freedesktop.org/software/ModemManager/api/latest/gdbus-org.freedesktop.ModemManager1.Modem.Modem3gpp.html
 const MODEM_MANAGER_SERVICE: &str = "org.freedesktop.ModemManager1";
 const MODEM_MANAGER_MODEM_PREFIX: &str = "/org/freedesktop/ModemManager1/Modem/";
@@ -59,10 +60,17 @@ const NM_DEVICE_TYPE_ETHERNET: u32 = 1;
 const NM_DEVICE_TYPE_WIFI: u32 = 2;
 const NM_DEVICE_TYPE_MODEM: u32 = 8;
 
+const NM_METERED_UNKNOWN: u32 = 0;
 const NM_METERED_YES: u32 = 1;
+const NM_METERED_NO: u32 = 2;
 const NM_METERED_GUESS_YES: u32 = 3;
+const NM_METERED_GUESS_NO: u32 = 4;
 
+const MM_MODEM_3GPP_REGISTRATION_STATE_UNKNOWN: u32 = 4;
 const MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING: u32 = 5;
+const MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING_SMS_ONLY: u32 = 7;
+const MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING_CSFB_NOT_PREFERRED: u32 = 10;
+const MM_MODEM_3GPP_REGISTRATION_STATE_ATTACHED_RLOS: u32 = 11;
 
 // Passive fallback inputs. This path intentionally avoids DNS, ping, HTTP, or
 // any other active reachability probe.
@@ -85,25 +93,31 @@ enum ConnectedState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ConnectionDetails {
-   metered: bool,
-   roaming: bool,
+   metered: Option<bool>,
+   roaming: Option<bool>,
+   // These retain the pre-tri-state boolean result for use only when the
+   // corresponding public policy result remains unknown.
+   frontend_metered: bool,
+   frontend_roaming: bool,
    connection_type: ConnectionType,
 }
 
 impl Default for ConnectionDetails {
    fn default() -> Self {
       Self {
-         metered: false,
-         roaming: false,
+         metered: None,
+         roaming: None,
+         frontend_metered: false,
+         frontend_roaming: false,
          connection_type: ConnectionType::Unknown,
       }
    }
 }
 
 impl ConnectionDetails {
-   fn metered_unknown() -> Self {
+   fn unknown_fail_closed() -> Self {
       Self {
-         metered: true,
+         frontend_metered: true,
          ..Self::default()
       }
    }
@@ -114,7 +128,7 @@ impl ConnectionDetails {
 /// NetworkManager is preferred when available because it exposes cached
 /// connectivity, primary-route, transport, and metered state over D-Bus. Systems
 /// without NetworkManager fall back to passive kernel state only.
-pub(crate) fn connection_status() -> Result<ConnectionStatus> {
+pub(crate) fn connection_status() -> Result<DetectedConnectionStatus> {
    debug!("querying Linux connection status");
 
    let connection = match system_bus_connection() {
@@ -221,7 +235,9 @@ fn system_bus_connection() -> zbus::Result<Connection> {
       .build()
 }
 
-fn network_manager_connection_status(connection: &Connection) -> zbus::Result<ConnectionStatus> {
+fn network_manager_connection_status(
+   connection: &Connection,
+) -> zbus::Result<DetectedConnectionStatus> {
    let manager = dbus_proxy(
       connection,
       NETWORK_MANAGER_SERVICE,
@@ -255,27 +271,36 @@ fn network_manager_connection_status(connection: &Connection) -> zbus::Result<Co
          connectivity,
          "NetworkManager connectivity does not indicate active internet access"
       );
-      return Ok(ConnectionStatus::disconnected());
+      return Ok(DetectedConnectionStatus::known(
+         ConnectionStatus::disconnected(),
+      ));
    }
 
    let details = match primary_connection_details(connection, &manager) {
       Ok(details) => details,
       Err(error) => {
-         warn!(%error, "failed to resolve Linux primary connection details; treating connection as metered");
-         ConnectionDetails::metered_unknown()
+         warn!(%error, "failed to resolve Linux primary connection details; policy state is unknown");
+         ConnectionDetails::unknown_fail_closed()
       }
    };
 
-   Ok(ConnectionStatus {
+   let status = ConnectionStatus {
       connected: true,
-      metered: Some(details.metered),
-      constrained: Some(is_constrained(
-         connectivity_state,
-         details.metered,
-         details.roaming,
-      )),
+      metered: details.metered,
+      constrained: constrained_status(connectivity_state, details.metered, details.roaming),
       connection_type: details.connection_type,
-   })
+   };
+   let frontend_constrained = frontend_constrained_status(
+      connectivity_state,
+      details.frontend_metered,
+      details.frontend_roaming,
+   );
+
+   Ok(DetectedConnectionStatus::with_unknown_fallbacks(
+      status,
+      details.frontend_metered,
+      frontend_constrained,
+   ))
 }
 
 fn primary_connection_details(
@@ -292,8 +317,8 @@ fn primary_connection_details(
    );
 
    if is_root_path(&primary_connection) {
-      warn!("NetworkManager returned no primary connection; treating connection as metered");
-      return Ok(ConnectionDetails::metered_unknown());
+      warn!("NetworkManager returned no primary connection; policy state is unknown");
+      return Ok(ConnectionDetails::unknown_fail_closed());
    }
 
    let active_connection = dbus_proxy(
@@ -310,19 +335,23 @@ fn primary_connection_details(
    );
 
    if devices.is_empty() {
-      warn!("NetworkManager primary connection has no devices; treating connection as metered");
-      return Ok(ConnectionDetails::metered_unknown());
+      warn!("NetworkManager primary connection has no devices; policy state is unknown");
+      return Ok(ConnectionDetails::unknown_fail_closed());
    }
 
    let mut details = ConnectionDetails::default();
    let mut read_any_device = false;
+   let mut metered_states = Vec::with_capacity(devices.len());
+   let mut roaming_states = Vec::with_capacity(devices.len());
 
    for device in devices {
       match device_details(connection, &device) {
          Ok(device_details) => {
             read_any_device = true;
-            details.metered |= device_details.metered;
-            details.roaming |= device_details.roaming;
+            metered_states.push(device_details.metered);
+            roaming_states.push(device_details.roaming);
+            details.frontend_metered |= device_details.frontend_metered;
+            details.frontend_roaming |= device_details.frontend_roaming;
 
             if details.connection_type == ConnectionType::Unknown {
                details.connection_type = device_details.connection_type;
@@ -330,24 +359,29 @@ fn primary_connection_details(
 
             debug!(
                device = %device.as_str(),
-               metered = device_details.metered,
-               roaming = device_details.roaming,
+               metered = ?device_details.metered,
+               roaming = ?device_details.roaming,
                connection_type = ?device_details.connection_type,
                "resolved NetworkManager device details"
             );
          }
          Err(error) => {
             warn!(%error, device = %device.as_str(), "failed to read NetworkManager device");
+            metered_states.push(None);
+            roaming_states.push(None);
          }
       }
    }
 
    if !read_any_device {
       warn!(
-         "failed to read any NetworkManager primary connection devices; treating connection as metered"
+         "failed to read any NetworkManager primary connection devices; policy state is unknown"
       );
-      details.metered = true;
+      details.frontend_metered = true;
    }
+
+   details.metered = combine_policy_states(metered_states);
+   details.roaming = combine_policy_states(roaming_states);
 
    Ok(details)
 }
@@ -374,48 +408,51 @@ fn device_details(
       "queried NetworkManager device type"
    );
 
-   let metered = match device_proxy.get_property::<u32>("Metered") {
+   let (metered, frontend_metered) = match device_proxy.get_property::<u32>("Metered") {
       Ok(metered) => {
-         let is_metered = is_metered(metered);
+         let metered_status = metered_status(metered);
          debug!(
             device = %device.as_str(),
             metered,
-            is_metered,
+            metered_status = ?metered_status,
             "queried NetworkManager device metered state"
          );
-         is_metered
+         (metered_status, metered_status.unwrap_or(false))
       }
       Err(error) => {
-         warn!(%error, device = %device.as_str(), "failed to read NetworkManager device metered state; treating device as metered");
-         true
+         warn!(%error, device = %device.as_str(), "failed to read NetworkManager device metered state; metering is unknown");
+         (None, true)
       }
    };
-   let roaming = if device_type == NM_DEVICE_TYPE_MODEM {
-      modem_is_roaming(connection, &device_proxy)
-   } else {
-      false
+   let roaming = match connection_type {
+      ConnectionType::Cellular => modem_is_roaming(connection, &device_proxy),
+      ConnectionType::Wifi | ConnectionType::Ethernet => Some(false),
+      ConnectionType::Unknown => None,
    };
+   let frontend_roaming = roaming.unwrap_or(false);
 
    Ok(ConnectionDetails {
       metered,
       roaming,
+      frontend_metered,
+      frontend_roaming,
       connection_type,
    })
 }
 
-fn modem_is_roaming(connection: &Connection, device_proxy: &Proxy<'_>) -> bool {
+fn modem_is_roaming(connection: &Connection, device_proxy: &Proxy<'_>) -> Option<bool> {
    // NM modem devices expose a `Udi` that usually points at the corresponding
    // ModemManager object. Only that object can tell us whether the cellular
    // registration state is roaming.
    match service_has_owner(connection, MODEM_MANAGER_SERVICE) {
       Ok(true) => {}
       Ok(false) => {
-         debug!("ModemManager service is not present; skipping roaming check");
-         return false;
+         debug!("ModemManager service is not present; roaming is unknown");
+         return None;
       }
       Err(error) => {
-         warn!(%error, "failed to probe ModemManager service; skipping roaming check");
-         return false;
+         warn!(%error, "failed to probe ModemManager service; roaming is unknown");
+         return None;
       }
    }
 
@@ -425,8 +462,8 @@ fn modem_is_roaming(connection: &Connection, device_proxy: &Proxy<'_>) -> bool {
          udi
       }
       Err(error) => {
-         warn!(%error, "failed to read NetworkManager modem Udi; skipping roaming check");
-         return false;
+         warn!(%error, "failed to read NetworkManager modem Udi; roaming is unknown");
+         return None;
       }
    };
 
@@ -435,14 +472,14 @@ fn modem_is_roaming(connection: &Connection, device_proxy: &Proxy<'_>) -> bool {
          udi,
          "NetworkManager modem Udi is not a ModemManager modem path"
       );
-      return false;
+      return None;
    }
 
    let modem_path = match ObjectPath::try_from(udi.as_str()) {
       Ok(path) => path,
       Err(error) => {
          warn!(%error, udi, "NetworkManager modem Udi is not a valid D-Bus object path");
-         return false;
+         return None;
       }
    };
 
@@ -454,23 +491,24 @@ fn modem_is_roaming(connection: &Connection, device_proxy: &Proxy<'_>) -> bool {
    ) {
       Ok(modem) => modem,
       Err(error) => {
-         warn!(%error, "failed to create ModemManager proxy; skipping roaming check");
-         return false;
+         warn!(%error, "failed to create ModemManager proxy; roaming is unknown");
+         return None;
       }
    };
 
    match modem.get_property::<u32>("RegistrationState") {
       Ok(registration_state) => {
-         let roaming = is_roaming(registration_state);
+         let roaming = roaming_status(registration_state);
          debug!(
             registration_state,
-            roaming, "queried ModemManager 3GPP registration state"
+            roaming = ?roaming,
+            "queried ModemManager 3GPP registration state"
          );
          roaming
       }
       Err(error) => {
-         warn!(%error, "failed to read ModemManager 3GPP registration state");
-         false
+         warn!(%error, "failed to read ModemManager 3GPP registration state; roaming is unknown");
+         None
       }
    }
 }
@@ -499,7 +537,7 @@ fn service_has_owner(connection: &Connection, service: &str) -> zbus::Result<boo
    Ok(proxy.name_has_owner(service_name)?)
 }
 
-fn fallback_connection_status() -> ConnectionStatus {
+fn fallback_connection_status() -> DetectedConnectionStatus {
    // Systems that do not run NetworkManager still commonly expose kernel route
    // tables through /proc. An up, non-loopback default route is the strongest
    // passive signal available without probing the network.
@@ -529,12 +567,12 @@ fn fallback_connection_status_from_routes(
    ipv4_route_table: &str,
    ipv6_route_table: &str,
    sys_class_net: &Path,
-) -> ConnectionStatus {
+) -> DetectedConnectionStatus {
    let Some(iface) = default_ipv4_route_interface(ipv4_route_table)
       .or_else(|| default_ipv6_route_interface(ipv6_route_table))
    else {
       debug!("Linux route table does not contain an up, non-loopback default route");
-      return ConnectionStatus::disconnected();
+      return DetectedConnectionStatus::known(ConnectionStatus::disconnected());
    };
 
    let connection_type = infer_transport_from_sysfs(sys_class_net, &iface);
@@ -551,7 +589,7 @@ fn fallback_connection_status_from_routes(
       "resolved Linux connection status via passive fallback without cost information"
    );
 
-   status
+   DetectedConnectionStatus::with_unknown_fallbacks(status, false, false)
 }
 
 fn map_connectivity(connectivity: u32) -> ConnectedState {
@@ -626,19 +664,69 @@ where
    Ok(connection_types)
 }
 
-fn is_metered(metered: u32) -> bool {
-   matches!(metered, NM_METERED_YES | NM_METERED_GUESS_YES)
+fn metered_status(metered: u32) -> Option<bool> {
+   if metered == NM_METERED_UNKNOWN {
+      return None;
+   }
+
+   match metered {
+      NM_METERED_YES | NM_METERED_GUESS_YES => Some(true),
+      NM_METERED_NO | NM_METERED_GUESS_NO => Some(false),
+      _ => None,
+   }
 }
 
-fn is_constrained(connectivity_state: ConnectedState, metered: bool, roaming: bool) -> bool {
+fn constrained_status(
+   connectivity_state: ConnectedState,
+   metered: Option<bool>,
+   roaming: Option<bool>,
+) -> Option<bool> {
    // NetworkManager does not expose a separate background-data policy signal.
    // Treat an explicitly or guessed metered primary device as constrained so
    // callers can avoid discretionary data use on Linux.
+   let connectivity_constrained = match connectivity_state {
+      ConnectedState::Constrained => Some(true),
+      ConnectedState::Connected | ConnectedState::Disconnected => Some(false),
+      ConnectedState::Unknown => None,
+   };
+
+   combine_policy_states([connectivity_constrained, metered, roaming])
+}
+
+fn frontend_constrained_status(
+   connectivity_state: ConnectedState,
+   metered: bool,
+   roaming: bool,
+) -> bool {
    connectivity_state == ConnectedState::Constrained || metered || roaming
 }
 
-fn is_roaming(registration_state: u32) -> bool {
-   registration_state == MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING
+/// Combines independent policy signals without losing uncertainty. A confirmed
+/// restriction wins, but a safe result requires every signal to be known false.
+fn combine_policy_states(states: impl IntoIterator<Item = Option<bool>>) -> Option<bool> {
+   let mut saw_known_state = false;
+   let mut all_states_known = true;
+
+   for state in states {
+      match state {
+         Some(true) => return Some(true),
+         Some(false) => saw_known_state = true,
+         None => all_states_known = false,
+      }
+   }
+
+   (saw_known_state && all_states_known).then_some(false)
+}
+
+fn roaming_status(registration_state: u32) -> Option<bool> {
+   match registration_state {
+      MM_MODEM_3GPP_REGISTRATION_STATE_UNKNOWN => None,
+      MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING
+      | MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING_SMS_ONLY
+      | MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING_CSFB_NOT_PREFERRED => Some(true),
+      0..=MM_MODEM_3GPP_REGISTRATION_STATE_ATTACHED_RLOS => Some(false),
+      _ => None,
+   }
 }
 
 fn is_modem_manager_modem_path(path: &str) -> bool {
@@ -904,12 +992,13 @@ mod tests {
    }
 
    #[test]
-   fn identifies_metered_states() {
-      assert!(!is_metered(0));
-      assert!(is_metered(NM_METERED_YES));
-      assert!(!is_metered(2));
-      assert!(is_metered(NM_METERED_GUESS_YES));
-      assert!(!is_metered(4));
+   fn maps_metered_states_without_collapsing_unknown() {
+      assert_eq!(metered_status(NM_METERED_UNKNOWN), None);
+      assert_eq!(metered_status(NM_METERED_YES), Some(true));
+      assert_eq!(metered_status(NM_METERED_NO), Some(false));
+      assert_eq!(metered_status(NM_METERED_GUESS_YES), Some(true));
+      assert_eq!(metered_status(NM_METERED_GUESS_NO), Some(false));
+      assert_eq!(metered_status(99), None);
    }
 
    #[test]
@@ -1001,27 +1090,102 @@ mod tests {
    }
 
    #[test]
-   fn treats_metering_or_roaming_as_constrained() {
-      assert!(!is_constrained(ConnectedState::Connected, false, false));
-      assert!(is_constrained(ConnectedState::Constrained, false, false));
-      assert!(is_constrained(ConnectedState::Connected, true, false));
-      assert!(is_constrained(ConnectedState::Connected, false, true));
-      assert!(is_constrained(ConnectedState::Connected, true, true));
+   fn combines_constraint_signals_without_collapsing_unknown() {
+      assert_eq!(
+         constrained_status(ConnectedState::Connected, Some(false), Some(false)),
+         Some(false)
+      );
+      assert_eq!(
+         constrained_status(ConnectedState::Constrained, None, None),
+         Some(true)
+      );
+      assert_eq!(
+         constrained_status(ConnectedState::Connected, Some(true), None),
+         Some(true)
+      );
+      assert_eq!(
+         constrained_status(ConnectedState::Connected, None, Some(true)),
+         Some(true)
+      );
+      assert_eq!(
+         constrained_status(ConnectedState::Connected, Some(false), None),
+         None
+      );
+      assert_eq!(
+         constrained_status(ConnectedState::Connected, None, None),
+         None
+      );
+      assert_eq!(
+         constrained_status(ConnectedState::Unknown, Some(false), Some(false)),
+         None
+      );
    }
 
    #[test]
-   fn treats_unknown_connection_details_as_metered() {
-      let details = ConnectionDetails::metered_unknown();
+   fn preserves_frontend_constraint_fallback_mapping() {
+      assert!(!frontend_constrained_status(
+         ConnectedState::Connected,
+         false,
+         false
+      ));
+      assert!(frontend_constrained_status(
+         ConnectedState::Constrained,
+         false,
+         false
+      ));
+      assert!(frontend_constrained_status(
+         ConnectedState::Connected,
+         true,
+         false
+      ));
+      assert!(!frontend_constrained_status(
+         ConnectedState::Unknown,
+         false,
+         false
+      ));
+   }
 
-      assert!(details.metered);
-      assert!(!details.roaming);
+   #[test]
+   fn preserves_unknown_connection_details() {
+      let details = ConnectionDetails::unknown_fail_closed();
+
+      assert_eq!(details.metered, None);
+      assert_eq!(details.roaming, None);
+      assert!(details.frontend_metered);
+      assert!(!details.frontend_roaming);
       assert_eq!(details.connection_type, ConnectionType::Unknown);
    }
 
    #[test]
-   fn detects_roaming_registration_state() {
-      assert!(is_roaming(MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING));
-      assert!(!is_roaming(1));
+   fn maps_roaming_registration_states_without_collapsing_unknown() {
+      for registration_state in [
+         MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING,
+         MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING_SMS_ONLY,
+         MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING_CSFB_NOT_PREFERRED,
+      ] {
+         assert_eq!(roaming_status(registration_state), Some(true));
+      }
+
+      assert_eq!(roaming_status(1), Some(false));
+      assert_eq!(
+         roaming_status(MM_MODEM_3GPP_REGISTRATION_STATE_UNKNOWN),
+         None
+      );
+      assert_eq!(roaming_status(99), None);
+   }
+
+   #[test]
+   fn combines_multiple_policy_signals_conservatively() {
+      assert_eq!(
+         combine_policy_states([Some(false), Some(false)]),
+         Some(false)
+      );
+      assert_eq!(combine_policy_states([Some(false), None]), None);
+      assert_eq!(combine_policy_states([None, Some(false)]), None);
+      assert_eq!(combine_policy_states([None, None]), None);
+      assert_eq!(combine_policy_states([Some(true), None]), Some(true));
+      assert_eq!(combine_policy_states([None, Some(true)]), Some(true));
+      assert_eq!(combine_policy_states([]), None);
    }
 
    #[test]
@@ -1059,12 +1223,15 @@ Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tI
 eth0\t00000000\t015018AC\t0003\t0\t0\t0\t00000000\t0\t0\t0
 ";
 
-      let status = fallback_connection_status_from_routes(route_table, "", temp.path());
+      let (status, unknown_metered_fallback, unknown_constrained_fallback) =
+         fallback_connection_status_from_routes(route_table, "", temp.path()).into_parts();
 
       assert!(status.connected);
       assert_eq!(status.metered, None);
       assert_eq!(status.constrained, None);
       assert_eq!(status.connection_type, ConnectionType::Ethernet);
+      assert!(!unknown_metered_fallback);
+      assert!(!unknown_constrained_fallback);
    }
 
    #[test]

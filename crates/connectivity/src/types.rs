@@ -80,9 +80,11 @@ pub struct ConnectionStatus {
    /// hotspots), or [`None`] when the backend cannot determine the cost.
    ///
    /// Platform mapping:
-   /// - **Windows:** `NetworkCostType` is `Unknown`, `Fixed`, or `Variable`
+   /// - **Windows:** `NetworkCostType` is `Fixed` or `Variable`; `Unknown`
+   ///   returns [`None`]
    /// - **Linux:** NetworkManager primary device `Metered` is `YES` or
-   ///   `GUESS_YES`; passive fallback returns [`None`]
+   ///   `GUESS_YES`; `UNKNOWN`, unavailable device details, and passive fallback
+   ///   return [`None`]
    /// - **iOS:** `NWPath.isExpensive`
    /// - **Android:** absence of `NET_CAPABILITY_NOT_METERED`
    pub metered: Option<bool>,
@@ -96,7 +98,8 @@ pub struct ConnectionStatus {
    ///   `OverDataLimit`, `Roaming`, or `BackgroundDataUsageRestricted`
    /// - **Linux:** NetworkManager `Connectivity` is `PORTAL` or `LIMITED`,
    ///   primary device is metered, or ModemManager reports cellular roaming;
-   ///   passive fallback returns [`None`]
+   ///   unknown or unavailable source signals and passive fallback can return
+   ///   [`None`]
    /// - **iOS:** `NWPath.isConstrained` (Low Data Mode)
    /// - **Android:** missing `NET_CAPABILITY_VALIDATED`, or Data Saver /
    ///   `RESTRICT_BACKGROUND_STATUS` on a metered active network
@@ -104,6 +107,77 @@ pub struct ConnectionStatus {
 
    /// The physical or logical transport used to connect to the network.
    pub connection_type: ConnectionType,
+}
+
+/// Internal detection result used to keep the Rust tri-state API separate from
+/// the source-specific fallbacks used by the pre-existing boolean frontend API.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DetectedConnectionStatus {
+   status: ConnectionStatus,
+   unknown_metered_fallback: bool,
+   unknown_constrained_fallback: bool,
+}
+
+/// Internal compatibility report for the workspace's Tauri frontend boundary.
+#[cfg(feature = "tauri-plugin")]
+#[doc(hidden)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionStatusWithFrontendFallbacks {
+   pub status: ConnectionStatus,
+   pub unknown_metered_fallback: bool,
+   pub unknown_constrained_fallback: bool,
+}
+
+impl DetectedConnectionStatus {
+   #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+   pub(crate) fn known(status: ConnectionStatus) -> Self {
+      debug_assert!(status.metered.is_some());
+      debug_assert!(status.constrained.is_some());
+
+      let unknown_metered_fallback = status.metered.unwrap_or(false);
+      let unknown_constrained_fallback = status.constrained.unwrap_or(false);
+
+      Self {
+         status,
+         unknown_metered_fallback,
+         unknown_constrained_fallback,
+      }
+   }
+
+   #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+   pub(crate) fn with_unknown_fallbacks(
+      status: ConnectionStatus,
+      unknown_metered_fallback: bool,
+      unknown_constrained_fallback: bool,
+   ) -> Self {
+      Self {
+         status,
+         unknown_metered_fallback,
+         unknown_constrained_fallback,
+      }
+   }
+
+   pub(crate) fn into_status(self) -> ConnectionStatus {
+      self.status
+   }
+
+   #[cfg(feature = "tauri-plugin")]
+   pub(crate) fn into_frontend_status(self) -> ConnectionStatusWithFrontendFallbacks {
+      ConnectionStatusWithFrontendFallbacks {
+         status: self.status,
+         unknown_metered_fallback: self.unknown_metered_fallback,
+         unknown_constrained_fallback: self.unknown_constrained_fallback,
+      }
+   }
+
+   #[cfg(all(test, target_os = "linux"))]
+   pub(crate) fn into_parts(self) -> (ConnectionStatus, bool, bool) {
+      (
+         self.status,
+         self.unknown_metered_fallback,
+         self.unknown_constrained_fallback,
+      )
+   }
 }
 
 impl ConnectionStatus {

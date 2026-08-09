@@ -59,7 +59,13 @@ constrained = network_manager_connectivity_is_portal_or_limited
 
 The passive fallback reports `metered: None` and `constrained: None` to Rust
 callers because kernel route tables do not expose either policy signal. The
-JavaScript command preserves its boolean API by mapping both values to `false`.
+JavaScript command preserves its legacy `false` values for this path. Other
+unknown NetworkManager and ModemManager signals also preserve the boolean value
+returned before the Rust API became tri-state; in particular, policy-read
+failures that previously failed closed remain `true` in JavaScript.
+
+For Rust callers, a confirmed `true` wins, `Some(false)` requires every relevant
+signal to be known false, and any remaining uncertainty produces `None`.
 
 ## Base Test Setup
 
@@ -221,8 +227,10 @@ Important enum values used by the plugin:
 | NetworkManager `DeviceType` | `2` | Wi-Fi |
 | NetworkManager `DeviceType` | `8` | Cellular modem |
 | NetworkManager `Metered` | `1`, `3` | Metered |
-| NetworkManager `Metered` | `0`, `2`, `4` | Not metered |
-| ModemManager `RegistrationState` | `5` | Roaming |
+| NetworkManager `Metered` | `2`, `4` | Not metered |
+| NetworkManager `Metered` | `0` | Unknown in Rust; `false` in JavaScript |
+| ModemManager `RegistrationState` | `5`, `7`, `10` | Roaming |
+| ModemManager `RegistrationState` | `4` | Unknown |
 
 ## Supported Connection Types
 
@@ -509,7 +517,8 @@ busctl get-property \
 ```
 
 If the value is `u 3`, expect the metered response. If the value is `u 4` or
-`u 2`, expect the unmetered response.
+`u 2`, expect the unmetered response. If NetworkManager still reports `u 0`,
+Rust callers receive `None` while the JavaScript response remains `false`.
 
 ## NetworkManager Disconnected Scenarios
 

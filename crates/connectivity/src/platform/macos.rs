@@ -6,7 +6,7 @@ use dispatch2::{DispatchQueue, DispatchRetained};
 use tracing::warn;
 
 use crate::error::{Error, Result};
-use crate::types::{ConnectionStatus, ConnectionType, ConnectionTypes};
+use crate::types::{ConnectionStatus, ConnectionType, ConnectionTypes, DetectedConnectionStatus};
 
 // Values mirror Apple's `nw_path_status_t` and `nw_interface_type_t` enums
 // from the Network framework headers.
@@ -69,12 +69,13 @@ unsafe impl Sync for MacosConnectivityMonitor {}
 /// starting with an initial update shortly after `nw_path_monitor_start`.
 /// Until that first update lands, the cache is empty and this reports disconnected.
 /// Either way, re-check at the decision point rather than relying on earlier results.
-pub(crate) fn connection_status() -> Result<ConnectionStatus> {
+pub(crate) fn connection_status() -> Result<DetectedConnectionStatus> {
    let monitor = MONITOR.get_or_init(create_monitor);
 
    monitor
       .as_ref()
       .map(MacosConnectivityMonitor::current_status)
+      .map(DetectedConnectionStatus::known)
       .ok_or_else(|| Error::DetectionFailed {
          message: String::from("failed to create macOS path monitor"),
          code: None,
