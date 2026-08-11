@@ -60,7 +60,11 @@ pub(crate) async fn connection_status<R: Runtime>(
          debug!(?status, "returning connection status to frontend");
 
          #[cfg(mobile)]
-         let frontend_status = FrontendConnectionStatus::from_status(status, false, false);
+         let frontend_status = {
+            // Native mobile implementations currently return booleans. If a
+            // future or malformed payload omits either value, fail closed.
+            FrontendConnectionStatus::from_status(status, true, true)
+         };
 
          #[cfg(desktop)]
          let frontend_status = FrontendConnectionStatus::from_status(
@@ -118,6 +122,25 @@ mod tests {
       assert!(status.metered);
       assert!(!status.constrained);
       assert_eq!(status.connection_type, ConnectionType::Ethernet);
+   }
+
+   #[test]
+   fn frontend_status_fails_closed_for_unknown_mobile_policy_flags() {
+      let status = FrontendConnectionStatus::from_status(
+         ConnectionStatus {
+            connected: true,
+            metered: None,
+            constrained: None,
+            connection_type: ConnectionType::Cellular,
+         },
+         true,
+         true,
+      );
+
+      assert!(status.connected);
+      assert!(status.metered);
+      assert!(status.constrained);
+      assert_eq!(status.connection_type, ConnectionType::Cellular);
    }
 }
 
