@@ -16,7 +16,7 @@ export type ConnectionType = 'wifi' | 'ethernet' | 'cellular' | 'unknown';
  */
 export interface ConnectionStatus {
 
-   /** Whether the device has an active internet connection. */
+   /** Whether the device has an active network path. */
    connected: boolean;
 
    /**
@@ -45,7 +45,8 @@ export interface ConnectionStatus {
     *   primary device is metered, or ModemManager reports cellular roaming;
     *   unknown values and the passive fallback can return `null`
     * - **iOS:** `NWPath.isConstrained` (Low Data Mode)
-    * - **Android:** Data Saver / `RESTRICT_BACKGROUND_STATUS`
+    * - **Android:** missing `NET_CAPABILITY_VALIDATED`, or Data Saver /
+    *   `RESTRICT_BACKGROUND_STATUS` on a metered active network
     */
    constrained: boolean | null;
 
