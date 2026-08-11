@@ -58,14 +58,13 @@ constrained = network_manager_connectivity_is_portal_or_limited
 ```
 
 The passive fallback reports `metered: None` and `constrained: None` to Rust
-callers because kernel route tables do not expose either policy signal. The
-JavaScript command preserves its legacy `false` values for this path. Other
-unknown NetworkManager and ModemManager signals also preserve the boolean value
-returned before the Rust API became tri-state; in particular, policy-read
-failures that previously failed closed remain `true` in JavaScript.
+callers, and `null` for both fields to JavaScript callers, because kernel route
+tables do not expose either policy signal. Other unknown NetworkManager and
+ModemManager signals are reported as `None` in Rust and `null` in JavaScript.
 
-For Rust callers, a confirmed `true` wins, `Some(false)` requires every relevant
-signal to be known false, and any remaining uncertainty produces `None`.
+A confirmed `true` wins, a safe result requires every relevant signal to be
+known false, and any remaining uncertainty produces `None` in Rust or `null` in
+JavaScript.
 
 ## Base Test Setup
 
@@ -228,7 +227,7 @@ Important enum values used by the plugin:
 | NetworkManager `DeviceType` | `8` | Cellular modem |
 | NetworkManager `Metered` | `1`, `3` | Metered |
 | NetworkManager `Metered` | `2`, `4` | Not metered |
-| NetworkManager `Metered` | `0` | Unknown in Rust; `false` in JavaScript |
+| NetworkManager `Metered` | `0` | Unknown: `None` in Rust; `null` in JavaScript |
 | ModemManager `RegistrationState` | `5`, `7`, `10` | Roaming in Rust and JavaScript; `constrained: true` |
 | ModemManager `RegistrationState` | `4` | Unknown |
 
@@ -379,8 +378,8 @@ route exists:
 ```json
 {
    "connected": true,
-   "metered": false,
-   "constrained": false,
+   "metered": null,
+   "constrained": null,
    "connectionType": "ethernet"
 }
 ```
@@ -522,7 +521,7 @@ busctl get-property \
 
 If the value is `u 3`, expect the metered response. If the value is `u 4` or
 `u 2`, expect the unmetered response. If NetworkManager still reports `u 0`,
-Rust callers receive `None` while the JavaScript response remains `false`.
+Rust callers receive `None` and JavaScript callers receive `null`.
 
 ## NetworkManager Disconnected Scenarios
 
@@ -790,8 +789,8 @@ If the default route is still present, expected response is:
 ```json
 {
    "connected": true,
-   "metered": false,
-   "constrained": false,
+   "metered": null,
+   "constrained": null,
    "connectionType": "ethernet"
 }
 ```
@@ -1004,13 +1003,26 @@ Practical options:
    * Record any real environment where the observation commands show a default
      route but the plugin returns `connectionType: "unknown"`.
 
-Expected connected unknown response:
+With NetworkManager and readable policy signals, the expected connected unknown
+transport response is:
 
 ```json
 {
    "connected": true,
    "metered": false,
    "constrained": false,
+   "connectionType": "unknown"
+}
+```
+
+When no primary connection details are available, or when this comes from the
+passive fallback, the policy fields are unknown:
+
+```json
+{
+   "connected": true,
+   "metered": null,
+   "constrained": null,
    "connectionType": "unknown"
 }
 ```

@@ -12,7 +12,7 @@ use zbus::proxy::CacheProperties;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 
 use crate::error::{Error, Result};
-use crate::types::{ConnectionStatus, ConnectionType, ConnectionTypes, DetectedConnectionStatus};
+use crate::types::{ConnectionStatus, ConnectionType, ConnectionTypes};
 
 // These local D-Bus calls read cached service state and normally complete within
 // milliseconds. Bound each call so a stalled service cannot occupy the blocking
@@ -95,10 +95,6 @@ enum ConnectedState {
 struct ConnectionDetails {
    metered: Option<bool>,
    roaming: Option<bool>,
-   // These retain the pre-tri-state boolean result for use only when the
-   // corresponding public policy result remains unknown.
-   frontend_metered: bool,
-   frontend_roaming: bool,
    connection_type: ConnectionType,
 }
 
@@ -107,18 +103,7 @@ impl Default for ConnectionDetails {
       Self {
          metered: None,
          roaming: None,
-         frontend_metered: false,
-         frontend_roaming: false,
          connection_type: ConnectionType::Unknown,
-      }
-   }
-}
-
-impl ConnectionDetails {
-   fn unknown_fail_closed() -> Self {
-      Self {
-         frontend_metered: true,
-         ..Self::default()
       }
    }
 }
@@ -128,7 +113,7 @@ impl ConnectionDetails {
 /// NetworkManager is preferred when available because it exposes cached
 /// connectivity, primary-route, transport, and metered state over D-Bus. Systems
 /// without NetworkManager fall back to passive kernel state only.
-pub(crate) fn connection_status() -> Result<DetectedConnectionStatus> {
+pub(crate) fn connection_status() -> Result<ConnectionStatus> {
    debug!("querying Linux connection status");
 
    let connection = match system_bus_connection() {
@@ -235,9 +220,7 @@ fn system_bus_connection() -> zbus::Result<Connection> {
       .build()
 }
 
-fn network_manager_connection_status(
-   connection: &Connection,
-) -> zbus::Result<DetectedConnectionStatus> {
+fn network_manager_connection_status(connection: &Connection) -> zbus::Result<ConnectionStatus> {
    let manager = dbus_proxy(
       connection,
       NETWORK_MANAGER_SERVICE,
@@ -272,36 +255,23 @@ fn network_manager_connection_status(
          connectivity,
          "NetworkManager connectivity does not indicate active internet access"
       );
-      return Ok(DetectedConnectionStatus::known(
-         ConnectionStatus::disconnected(),
-      ));
+      return Ok(ConnectionStatus::disconnected());
    }
 
    let details = match primary_connection_details(connection, &manager) {
       Ok(details) => details,
       Err(error) => {
          warn!(%error, "failed to resolve Linux primary connection details; policy state is unknown");
-         ConnectionDetails::unknown_fail_closed()
+         ConnectionDetails::default()
       }
    };
 
-   let status = ConnectionStatus {
+   Ok(ConnectionStatus {
       connected: true,
       metered: details.metered,
       constrained: constrained_status(connectivity_state, details.metered, details.roaming),
       connection_type: details.connection_type,
-   };
-   let frontend_constrained = frontend_constrained_status(
-      connectivity_state,
-      details.frontend_metered,
-      details.frontend_roaming,
-   );
-
-   Ok(DetectedConnectionStatus::with_unknown_fallbacks(
-      status,
-      details.frontend_metered,
-      frontend_constrained,
-   ))
+   })
 }
 
 fn primary_connection_details(
@@ -319,7 +289,7 @@ fn primary_connection_details(
 
    if is_root_path(&primary_connection) {
       warn!("NetworkManager returned no primary connection; policy state is unknown");
-      return Ok(ConnectionDetails::unknown_fail_closed());
+      return Ok(ConnectionDetails::default());
    }
 
    let active_connection = dbus_proxy(
@@ -337,7 +307,7 @@ fn primary_connection_details(
 
    if devices.is_empty() {
       warn!("NetworkManager primary connection has no devices; policy state is unknown");
-      return Ok(ConnectionDetails::unknown_fail_closed());
+      return Ok(ConnectionDetails::default());
    }
 
    let mut details = ConnectionDetails::default();
@@ -351,9 +321,6 @@ fn primary_connection_details(
             read_any_device = true;
             metered_states.push(device_details.metered);
             roaming_states.push(device_details.roaming);
-            details.frontend_metered |= device_details.frontend_metered;
-            details.frontend_roaming |= device_details.frontend_roaming;
-
             if details.connection_type == ConnectionType::Unknown {
                details.connection_type = device_details.connection_type;
             }
@@ -378,7 +345,6 @@ fn primary_connection_details(
       warn!(
          "failed to read any NetworkManager primary connection devices; policy state is unknown"
       );
-      details.frontend_metered = true;
    }
 
    details.metered = combine_policy_states(metered_states);
@@ -409,7 +375,7 @@ fn device_details(
       "queried NetworkManager device type"
    );
 
-   let (metered, frontend_metered) = match device_proxy.get_property::<u32>("Metered") {
+   let metered = match device_proxy.get_property::<u32>("Metered") {
       Ok(metered) => {
          let metered_status = metered_status(metered);
          debug!(
@@ -418,23 +384,20 @@ fn device_details(
             metered_status = ?metered_status,
             "queried NetworkManager device metered state"
          );
-         (metered_status, metered_status.unwrap_or(false))
+         metered_status
       }
       Err(error) => {
          warn!(%error, device = %device.as_str(), "failed to read NetworkManager device metered state; metering is unknown");
-         (None, true)
+         None
       }
    };
    let roaming = connection_type_roaming_status(connection_type, || {
       modem_is_roaming(connection, &device_proxy)
    });
-   let frontend_roaming = roaming.unwrap_or(false);
 
    Ok(ConnectionDetails {
       metered,
       roaming,
-      frontend_metered,
-      frontend_roaming,
       connection_type,
    })
 }
@@ -549,7 +512,7 @@ fn service_has_owner(connection: &Connection, service: &str) -> zbus::Result<boo
    Ok(proxy.name_has_owner(service_name)?)
 }
 
-fn fallback_connection_status() -> DetectedConnectionStatus {
+fn fallback_connection_status() -> ConnectionStatus {
    // Systems that do not run NetworkManager still commonly expose kernel route
    // tables through /proc. An up, non-loopback default route is the strongest
    // passive signal available without probing the network.
@@ -579,12 +542,12 @@ fn fallback_connection_status_from_routes(
    ipv4_route_table: &str,
    ipv6_route_table: &str,
    sys_class_net: &Path,
-) -> DetectedConnectionStatus {
+) -> ConnectionStatus {
    let Some(iface) = default_ipv4_route_interface(ipv4_route_table)
       .or_else(|| default_ipv6_route_interface(ipv6_route_table))
    else {
       debug!("Linux route table does not contain an up, non-loopback default route");
-      return DetectedConnectionStatus::known(ConnectionStatus::disconnected());
+      return ConnectionStatus::disconnected();
    };
 
    let connection_type = infer_transport_from_sysfs(sys_class_net, &iface);
@@ -601,7 +564,7 @@ fn fallback_connection_status_from_routes(
       "resolved Linux connection status via passive fallback without cost information"
    );
 
-   DetectedConnectionStatus::with_unknown_fallbacks(status, false, false)
+   status
 }
 
 fn map_connectivity(connectivity: u32) -> ConnectedState {
@@ -711,14 +674,6 @@ fn constrained_status(
    };
 
    combine_policy_states([connectivity_constrained, metered, roaming])
-}
-
-fn frontend_constrained_status(
-   connectivity_state: ConnectedState,
-   metered: bool,
-   roaming: bool,
-) -> bool {
-   connectivity_state == ConnectedState::Constrained || metered || roaming
 }
 
 /// Combines independent policy signals without losing uncertainty. A confirmed
@@ -1176,37 +1131,11 @@ mod tests {
    }
 
    #[test]
-   fn preserves_frontend_constraint_fallback_mapping() {
-      assert!(!frontend_constrained_status(
-         ConnectedState::Connected,
-         false,
-         false
-      ));
-      assert!(frontend_constrained_status(
-         ConnectedState::Constrained,
-         false,
-         false
-      ));
-      assert!(frontend_constrained_status(
-         ConnectedState::Connected,
-         true,
-         false
-      ));
-      assert!(!frontend_constrained_status(
-         ConnectedState::Unknown,
-         false,
-         false
-      ));
-   }
-
-   #[test]
-   fn preserves_unknown_connection_details() {
-      let details = ConnectionDetails::unknown_fail_closed();
+   fn defaults_to_unknown_connection_details() {
+      let details = ConnectionDetails::default();
 
       assert_eq!(details.metered, None);
       assert_eq!(details.roaming, None);
-      assert!(details.frontend_metered);
-      assert!(!details.frontend_roaming);
       assert_eq!(details.connection_type, ConnectionType::Unknown);
    }
 
@@ -1220,11 +1149,10 @@ mod tests {
          let roaming = roaming_status(registration_state);
 
          assert_eq!(roaming, Some(true));
-         assert!(frontend_constrained_status(
-            ConnectedState::Connected,
-            false,
-            roaming.unwrap_or(false),
-         ));
+         assert_eq!(
+            constrained_status(ConnectedState::Connected, Some(false), roaming),
+            Some(true)
+         );
       }
 
       assert_eq!(roaming_status(1), Some(false));
@@ -1284,15 +1212,12 @@ Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tI
 eth0\t00000000\t015018AC\t0003\t0\t0\t0\t00000000\t0\t0\t0
 ";
 
-      let (status, unknown_metered_fallback, unknown_constrained_fallback) =
-         fallback_connection_status_from_routes(route_table, "", temp.path()).into_parts();
+      let status = fallback_connection_status_from_routes(route_table, "", temp.path());
 
       assert!(status.connected);
       assert_eq!(status.metered, None);
       assert_eq!(status.constrained, None);
       assert_eq!(status.connection_type, ConnectionType::Ethernet);
-      assert!(!unknown_metered_fallback);
-      assert!(!unknown_constrained_fallback);
    }
 
    #[test]

@@ -10,9 +10,6 @@ readme = "README.md"
 keywords = ["network", "connectivity", "desktop"]
 categories = ["network-programming", "os"]
 
-[features]
-tauri-plugin = []
-
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
 tracing = { version = "0.1.41", default-features = false, features = ["std", "log"] }

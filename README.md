@@ -172,8 +172,8 @@ async function checkConnection() {
 
 #### Make network policy decisions
 
-Use the connection status to defer expensive operations on
-constrained or metered connections:
+Use the connection status to defer expensive operations unless the connection
+is confirmed unrestricted:
 
 ```ts
 import { connectionStatus } from '@silvermine/tauri-plugin-connectivity';
@@ -186,8 +186,8 @@ async function shouldDownload(): Promise<boolean> {
       return false;
    }
 
-   if (status.metered || status.constrained) {
-      console.debug('Metered or constrained connection — deferring download');
+   if (status.metered !== false || status.constrained !== false) {
+      console.debug('Restricted or unknown connection policy — deferring download');
       return false;
    }
 
@@ -260,22 +260,23 @@ an unknown value as safe.
 
 The `connectionStatus()` function returns a `ConnectionStatus` object:
 
-| Field            | Type             | Description                                                       |
-| ---------------- | ---------------- | ----------------------------------------------------------------- |
-| `connected`      | `boolean`        | Whether the device has an active network path                     |
-| `metered`        | `boolean`        | Whether data usage is billed or limited                           |
-| `constrained`    | `boolean`        | Whether the connection is data-constrained or restricted          |
-| `connectionType` | `ConnectionType` | The physical transport: `wifi`, `ethernet`, `cellular`, `unknown` |
+| Field            | Type              | Description                                                       |
+| ---------------- | ----------------- | ----------------------------------------------------------------- |
+| `connected`      | `boolean`         | Whether the device has an active network path                     |
+| `metered`        | `boolean \| null` | Whether data usage is billed or limited, or `null` when unknown   |
+| `constrained`    | `boolean \| null` | Whether the connection is constrained, or `null` when unknown     |
+| `connectionType` | `ConnectionType`  | The physical transport: `wifi`, `ethernet`, `cellular`, `unknown` |
 
-The JavaScript fields remain booleans and preserve their existing platform
-fallbacks when policy values are unknown or unavailable. For example, Windows
-unknown cost remains `true`, Linux's passive fallback remains `false`, and
-Linux policy-read failures that previously failed closed remain `true`.
+For `metered` and `constrained`, `true` means the restriction is confirmed,
+`false` means the connection is confirmed unrestricted, and `null` means the
+platform could not determine the value. Restrictive policies should require
+both fields to be exactly `false`, as shown above, rather than treating an
+unknown value as safe.
+
 ModemManager registration states `5`, `7`, and `10` are recognized as roaming
 and therefore report `constrained: true` in both Rust and JavaScript. States `7`
 and `10` previously reported `false` to JavaScript; this is an intentional
-correction. Rust callers can use the tri-state fields directly when they need
-to distinguish an unknown value.
+correction.
 
 ### Supported Connection Types
 
@@ -308,8 +309,8 @@ path reported by `NWPathMonitor`, so inactive transports are not listed.
 | Field            | Windows                                                                             | Linux                                             | macOS                                          | iOS                         | Android                            |
 | ---------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------- | --------------------------- | ---------------------------------- |
 | `connected`      | `InternetAccess` or `ConstrainedInternetAccess`                                     | NetworkManager `FULL`/`PORTAL`/`LIMITED` or up IPv4/IPv6 default route fallback | `nw_path_get_status == satisfied`              | `NWPath.status` satisfied   | `NET_CAPABILITY_INTERNET`          |
-| `metered`        | `NetworkCostType` Fixed/Variable; Unknown is `None` in Rust and retains the legacy `true` in JavaScript | NetworkManager primary device `Metered`; unknown/unavailable signals are `None` in Rust and retain their source-specific legacy JavaScript fallback | `nw_path_is_expensive`                         | `NWPath.isExpensive`        | absence of `NOT_METERED`           |
-| `constrained`    | `ConstrainedInternetAccess`, data-limit, roaming, or background data restrictions; computed independently of `metered`, so unknown cost alone does not make this `None` | NetworkManager portal/limited/metered or cellular roaming; unknown/unavailable signals are `None` in Rust and retain their source-specific legacy JavaScript fallback | `nw_path_is_constrained`                       | `NWPath.isConstrained`      | missing `VALIDATED`, or Data Saver / `RESTRICT_BACKGROUND_STATUS` on a metered active network |
+| `metered`        | `NetworkCostType` Fixed/Variable; Unknown is `None` in Rust and `null` in JavaScript | NetworkManager primary device `Metered`; unknown/unavailable signals are `None` in Rust and `null` in JavaScript | `nw_path_is_expensive`                         | `NWPath.isExpensive`        | absence of `NOT_METERED`           |
+| `constrained`    | `ConstrainedInternetAccess`, data-limit, roaming, or background data restrictions; computed independently of `metered`, so unknown cost alone does not make this `None` | NetworkManager portal/limited/metered or cellular roaming; unknown/unavailable signals are `None` in Rust and `null` in JavaScript | `nw_path_is_constrained`                       | `NWPath.isConstrained`      | missing `VALIDATED`, or Data Saver / `RESTRICT_BACKGROUND_STATUS` on a metered active network |
 | `connectionType` | WWAN/WLAN/IANA interface type                                                       | NetworkManager device type or sysfs fallback      | First `nw_path_enumerate_interfaces` entry     | `NWPath.usesInterfaceType(_:)` priority | `TRANSPORT_*` capabilities         |
 
 ## Development Standards

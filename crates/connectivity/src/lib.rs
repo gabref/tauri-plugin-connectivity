@@ -18,9 +18,6 @@ mod platform;
 mod types;
 
 pub use error::{Error, Result};
-#[cfg(feature = "tauri-plugin")]
-#[doc(hidden)]
-pub use types::ConnectionStatusWithFrontendFallbacks;
 pub use types::{ConnectionStatus, ConnectionType};
 
 /// Returns the current network connection status reported by the platform.
@@ -34,20 +31,7 @@ pub use types::{ConnectionStatus, ConnectionType};
 /// Returns [`Error::Unsupported`] when the target has no connectivity backend,
 /// or [`Error::DetectionFailed`] when the platform cannot determine the status.
 pub fn connection_status() -> Result<ConnectionStatus> {
-   platform::connection_status().map(types::DetectedConnectionStatus::into_status)
-}
-
-/// Returns the Rust connection status together with the source-specific boolean
-/// fallbacks used when the pre-existing Tauri frontend API encounters unknown
-/// policy values.
-///
-/// This is an internal integration hook for the workspace's Tauri plugin. Rust
-/// callers should use [`connection_status`] and handle its tri-state fields.
-#[cfg(feature = "tauri-plugin")]
-#[doc(hidden)]
-pub fn connection_status_with_frontend_fallbacks() -> Result<ConnectionStatusWithFrontendFallbacks>
-{
-   platform::connection_status().map(types::DetectedConnectionStatus::into_frontend_status)
+   platform::connection_status()
 }
 
 /// Returns the connection transport classes reported by the platform.

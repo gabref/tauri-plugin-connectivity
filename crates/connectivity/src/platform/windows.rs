@@ -11,7 +11,7 @@ use windows::Win32::NetworkManagement::IpHelper::{
 use windows::Win32::Networking::WinSock::AF_UNSPEC;
 
 use crate::error::{Error, Result};
-use crate::types::{ConnectionStatus, ConnectionType, ConnectionTypes, DetectedConnectionStatus};
+use crate::types::{ConnectionStatus, ConnectionType, ConnectionTypes};
 
 /// [`IanaInterfaceType`](https://www.iana.org/assignments/ianaiftype-mib/ianaiftype-mib) values.
 /// IANA interface type for Ethernet-like interfaces (`ethernetCsmacd`).
@@ -83,16 +83,14 @@ fn collect_successful_items<T, E>(
 /// device-wide network. We query that profile and derive connectivity, cost, and
 /// transport information from the resulting
 /// [`ConnectionProfile`](https://learn.microsoft.com/en-us/uwp/api/windows.networking.connectivity.connectionprofile?view=winrt-28000).
-pub(crate) fn connection_status() -> Result<DetectedConnectionStatus> {
+pub(crate) fn connection_status() -> Result<ConnectionStatus> {
    debug!("querying Windows internet connection profile");
 
    let profile = match NetworkInformation::GetInternetConnectionProfile() {
       Ok(profile) => profile,
       Err(error) if is_missing_profile_error(&error) => {
          debug!("Windows did not return an internet connection profile");
-         return Ok(DetectedConnectionStatus::known(
-            ConnectionStatus::disconnected(),
-         ));
+         return Ok(ConnectionStatus::disconnected());
       }
       Err(error) => {
          warn!(%error, "failed to query Windows internet connection profile");
@@ -114,9 +112,7 @@ pub(crate) fn connection_status() -> Result<DetectedConnectionStatus> {
          connectivity_level = ?connectivity_level,
          "connectivity level does not indicate internet or constrained access"
       );
-      return Ok(DetectedConnectionStatus::known(
-         ConnectionStatus::disconnected(),
-      ));
+      return Ok(ConnectionStatus::disconnected());
    }
 
    let connection_cost = profile
@@ -150,11 +146,7 @@ pub(crate) fn connection_status() -> Result<DetectedConnectionStatus> {
       "resolved Windows connection status"
    );
 
-   Ok(DetectedConnectionStatus::with_unknown_fallbacks(
-      status,
-      legacy_metered_status(cost_type),
-      constrained,
-   ))
+   Ok(status)
 }
 
 /// Returns the supported physical connection transport classes.
@@ -207,15 +199,6 @@ fn metered_status(cost_type: NetworkCostType) -> Option<bool> {
       NetworkCostType::Fixed | NetworkCostType::Variable => Some(true),
       _ => None,
    }
-}
-
-/// Preserves the boolean cost mapping exposed to JavaScript before the Rust API
-/// gained an explicit unknown state.
-fn legacy_metered_status(cost_type: NetworkCostType) -> bool {
-   matches!(
-      cost_type,
-      NetworkCostType::Unknown | NetworkCostType::Fixed | NetworkCostType::Variable
-   )
 }
 
 /// Windows exposes several cost-related flags. We treat approaching/over-limit
@@ -465,14 +448,6 @@ mod tests {
       assert_eq!(metered_status(NetworkCostType::Unrestricted), Some(false));
       assert_eq!(metered_status(NetworkCostType::Fixed), Some(true));
       assert_eq!(metered_status(NetworkCostType::Variable), Some(true));
-   }
-
-   #[test]
-   fn preserves_legacy_metered_cost_mapping() {
-      assert!(legacy_metered_status(NetworkCostType::Unknown));
-      assert!(!legacy_metered_status(NetworkCostType::Unrestricted));
-      assert!(legacy_metered_status(NetworkCostType::Fixed));
-      assert!(legacy_metered_status(NetworkCostType::Variable));
    }
 
    #[test]
