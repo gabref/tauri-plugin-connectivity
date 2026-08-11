@@ -251,20 +251,21 @@ fn network_manager_connection_status(
    let connectivity = manager.get_property::<u32>("Connectivity")?;
    debug!(connectivity, "queried NetworkManager connectivity state");
 
-   let connectivity_state = map_connectivity(connectivity);
-   let connected = match connectivity_state {
-      ConnectedState::Connected => true,
-      ConnectedState::Constrained => true,
-      ConnectedState::Disconnected => false,
+   let connectivity_state = match map_connectivity(connectivity) {
       ConnectedState::Unknown => {
          let state = manager.get_property::<u32>("State")?;
          debug!(
             connectivity,
             state, "NetworkManager connectivity is unknown; falling back to state"
          );
-         has_global_connectivity(state)
+         connectivity_state_from_global_state(state)
       }
+      connectivity_state => connectivity_state,
    };
+   let connected = matches!(
+      connectivity_state,
+      ConnectedState::Connected | ConnectedState::Constrained
+   );
 
    if !connected {
       debug!(
@@ -603,6 +604,14 @@ fn map_connectivity(connectivity: u32) -> ConnectedState {
 
 fn has_global_connectivity(state: u32) -> bool {
    state == NM_STATE_CONNECTED_GLOBAL
+}
+
+fn connectivity_state_from_global_state(state: u32) -> ConnectedState {
+   if has_global_connectivity(state) {
+      ConnectedState::Connected
+   } else {
+      ConnectedState::Disconnected
+   }
 }
 
 fn map_device_type(device_type: u32) -> ConnectionType {
@@ -985,10 +994,19 @@ mod tests {
    }
 
    #[test]
-   fn falls_back_to_global_state_only_for_unknown_connectivity() {
-      assert!(has_global_connectivity(NM_STATE_CONNECTED_GLOBAL));
-      assert!(!has_global_connectivity(60));
-      assert!(!has_global_connectivity(20));
+   fn resolves_unknown_connectivity_from_global_state() {
+      assert_eq!(
+         connectivity_state_from_global_state(NM_STATE_CONNECTED_GLOBAL),
+         ConnectedState::Connected
+      );
+      assert_eq!(
+         connectivity_state_from_global_state(60),
+         ConnectedState::Disconnected
+      );
+      assert_eq!(
+         connectivity_state_from_global_state(20),
+         ConnectedState::Disconnected
+      );
    }
 
    #[test]
@@ -1116,8 +1134,12 @@ mod tests {
          None
       );
       assert_eq!(
-         constrained_status(ConnectedState::Unknown, Some(false), Some(false)),
-         None
+         constrained_status(
+            connectivity_state_from_global_state(NM_STATE_CONNECTED_GLOBAL),
+            Some(false),
+            Some(false),
+         ),
+         Some(false)
       );
    }
 
