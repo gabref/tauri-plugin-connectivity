@@ -425,11 +425,9 @@ fn device_details(
          (None, true)
       }
    };
-   let roaming = match connection_type {
-      ConnectionType::Cellular => modem_is_roaming(connection, &device_proxy),
-      ConnectionType::Wifi | ConnectionType::Ethernet => Some(false),
-      ConnectionType::Unknown => None,
-   };
+   let roaming = connection_type_roaming_status(connection_type, || {
+      modem_is_roaming(connection, &device_proxy)
+   });
    let frontend_roaming = roaming.unwrap_or(false);
 
    Ok(ConnectionDetails {
@@ -439,6 +437,19 @@ fn device_details(
       frontend_roaming,
       connection_type,
    })
+}
+
+fn connection_type_roaming_status(
+   connection_type: ConnectionType,
+   cellular_status: impl FnOnce() -> Option<bool>,
+) -> Option<bool> {
+   if connection_type == ConnectionType::Cellular {
+      cellular_status()
+   } else {
+      // NetworkManager's modem type maps to Cellular. Every other mapped or
+      // unknown transport is therefore definitively outside roaming policy.
+      Some(false)
+   }
 }
 
 fn modem_is_roaming(connection: &Connection, device_proxy: &Proxy<'_>) -> Option<bool> {
@@ -1031,6 +1042,27 @@ mod tests {
          ConnectionType::Cellular
       );
       assert_eq!(map_device_type(999), ConnectionType::Unknown);
+   }
+
+   #[test]
+   fn treats_non_cellular_connection_types_as_not_roaming() {
+      for connection_type in [
+         ConnectionType::Wifi,
+         ConnectionType::Ethernet,
+         ConnectionType::Unknown,
+      ] {
+         assert_eq!(
+            connection_type_roaming_status(connection_type, || {
+               panic!("non-cellular transport must not query ModemManager")
+            }),
+            Some(false)
+         );
+      }
+
+      assert_eq!(
+         connection_type_roaming_status(ConnectionType::Cellular, || None),
+         None
+      );
    }
 
    #[test]
