@@ -129,13 +129,17 @@ pub struct ConnectionStatusWithFrontendFallbacks {
 }
 
 impl DetectedConnectionStatus {
+   /// Wraps a status whose policy fields are expected to be known.
+   ///
+   /// An unexpected unknown value fails closed at the frontend boundary in
+   /// release builds while the debug assertion catches the invalid call site.
    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
    pub(crate) fn known(status: ConnectionStatus) -> Self {
       debug_assert!(status.metered.is_some());
       debug_assert!(status.constrained.is_some());
 
-      let unknown_metered_fallback = status.metered.unwrap_or(false);
-      let unknown_constrained_fallback = status.constrained.unwrap_or(false);
+      let unknown_metered_fallback = status.metered.unwrap_or(true);
+      let unknown_constrained_fallback = status.constrained.unwrap_or(true);
 
       Self {
          status,
