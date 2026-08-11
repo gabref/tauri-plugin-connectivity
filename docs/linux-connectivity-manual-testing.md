@@ -229,8 +229,12 @@ Important enum values used by the plugin:
 | NetworkManager `Metered` | `1`, `3` | Metered |
 | NetworkManager `Metered` | `2`, `4` | Not metered |
 | NetworkManager `Metered` | `0` | Unknown in Rust; `false` in JavaScript |
-| ModemManager `RegistrationState` | `5`, `7`, `10` | Roaming |
+| ModemManager `RegistrationState` | `5`, `7`, `10` | Roaming in Rust and JavaScript; `constrained: true` |
 | ModemManager `RegistrationState` | `4` | Unknown |
+
+JavaScript previously reported `constrained: false` for registration states
+`7` and `10`. Treating these documented roaming states as constrained is an
+intentional correction.
 
 ## Supported Connection Types
 

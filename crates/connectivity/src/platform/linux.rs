@@ -1217,7 +1217,14 @@ mod tests {
          MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING_SMS_ONLY,
          MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING_CSFB_NOT_PREFERRED,
       ] {
-         assert_eq!(roaming_status(registration_state), Some(true));
+         let roaming = roaming_status(registration_state);
+
+         assert_eq!(roaming, Some(true));
+         assert!(frontend_constrained_status(
+            ConnectedState::Connected,
+            false,
+            roaming.unwrap_or(false),
+         ));
       }
 
       assert_eq!(roaming_status(1), Some(false));

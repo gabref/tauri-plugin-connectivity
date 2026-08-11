@@ -268,10 +268,14 @@ The `connectionStatus()` function returns a `ConnectionStatus` object:
 | `connectionType` | `ConnectionType` | The physical transport: `wifi`, `ethernet`, `cellular`, `unknown` |
 
 The JavaScript fields remain booleans and preserve their existing platform
-fallbacks for compatibility. For example, Windows unknown cost remains `true`,
-Linux's passive fallback remains `false`, and Linux policy-read failures that
-previously failed closed remain `true`. Rust callers can use the tri-state
-fields directly when they need to distinguish an unknown value.
+fallbacks when policy values are unknown or unavailable. For example, Windows
+unknown cost remains `true`, Linux's passive fallback remains `false`, and
+Linux policy-read failures that previously failed closed remain `true`.
+ModemManager registration states `5`, `7`, and `10` are recognized as roaming
+and therefore report `constrained: true` in both Rust and JavaScript. States `7`
+and `10` previously reported `false` to JavaScript; this is an intentional
+correction. Rust callers can use the tri-state fields directly when they need
+to distinguish an unknown value.
 
 ### Supported Connection Types
 
