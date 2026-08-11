@@ -95,7 +95,9 @@ pub struct ConnectionStatus {
    ///
    /// Platform mapping:
    /// - **Windows:** `ConstrainedInternetAccess`, `ApproachingDataLimit`,
-   ///   `OverDataLimit`, `Roaming`, or `BackgroundDataUsageRestricted`
+   ///   `OverDataLimit`, `Roaming`, or `BackgroundDataUsageRestricted`;
+   ///   this is computed independently of `metered`, so unknown cost alone does
+   ///   not make the constraint state unknown
    /// - **Linux:** NetworkManager `Connectivity` is `PORTAL` or `LIMITED`,
    ///   primary device is metered, or ModemManager reports cellular roaming;
    ///   unknown or unavailable source signals and passive fallback can return
