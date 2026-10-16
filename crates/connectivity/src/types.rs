@@ -126,6 +126,7 @@ impl ConnectionStatus {
 #[cfg(test)]
 mod tests {
    use super::*;
+   use rstest::rstest;
 
    #[test]
    fn serializes_connection_status() {
@@ -143,19 +144,14 @@ mod tests {
       assert_eq!(json["connectionType"], "cellular");
    }
 
-   #[test]
-   fn serializes_all_connection_types() {
-      let cases = [
-         (ConnectionType::Wifi, "wifi"),
-         (ConnectionType::Ethernet, "ethernet"),
-         (ConnectionType::Cellular, "cellular"),
-         (ConnectionType::Unknown, "unknown"),
-      ];
-
-      for (variant, expected) in cases {
-         let json = serde_json::to_value(variant).unwrap();
-         assert_eq!(json, expected);
-      }
+   #[rstest]
+   #[case::wifi(ConnectionType::Wifi, "wifi")]
+   #[case::ethernet(ConnectionType::Ethernet, "ethernet")]
+   #[case::cellular(ConnectionType::Cellular, "cellular")]
+   #[case::unknown(ConnectionType::Unknown, "unknown")]
+   fn serializes_all_connection_types(#[case] variant: ConnectionType, #[case] expected: &str) {
+      let json = serde_json::to_value(variant).unwrap();
+      assert_eq!(json, expected);
    }
 
    #[test]
@@ -170,19 +166,14 @@ mod tests {
       assert_eq!(status.connection_type, ConnectionType::Wifi);
    }
 
-   #[test]
-   fn deserializes_all_connection_types() {
-      let cases = [
-         ("\"wifi\"", ConnectionType::Wifi),
-         ("\"ethernet\"", ConnectionType::Ethernet),
-         ("\"cellular\"", ConnectionType::Cellular),
-         ("\"unknown\"", ConnectionType::Unknown),
-      ];
-
-      for (json, expected) in cases {
-         let result: ConnectionType = serde_json::from_str(json).unwrap();
-         assert_eq!(result, expected);
-      }
+   #[rstest]
+   #[case::wifi("\"wifi\"", ConnectionType::Wifi)]
+   #[case::ethernet("\"ethernet\"", ConnectionType::Ethernet)]
+   #[case::cellular("\"cellular\"", ConnectionType::Cellular)]
+   #[case::unknown("\"unknown\"", ConnectionType::Unknown)]
+   fn deserializes_all_connection_types(#[case] json: &str, #[case] expected: ConnectionType) {
+      let result: ConnectionType = serde_json::from_str(json).unwrap();
+      assert_eq!(result, expected);
    }
 
    #[test]
@@ -209,32 +200,28 @@ mod tests {
       assert!(json["constrained"].is_null());
    }
 
-   #[test]
-   fn connection_types_dedupes_known_types_and_ignores_unknown() {
+   #[rstest]
+   #[case::known_types_are_deduped_and_unknown_ignored(
+      &[
+         ConnectionType::Cellular,
+         ConnectionType::Unknown,
+         ConnectionType::Wifi,
+         ConnectionType::Cellular,
+         ConnectionType::Ethernet,
+      ],
+      &[ConnectionType::Wifi, ConnectionType::Ethernet, ConnectionType::Cellular]
+   )]
+   #[case::only_unknown_inserted_is_empty(&[ConnectionType::Unknown], &[])]
+   fn connection_types_into_vec_returns_inserted_known_types(
+      #[case] inserted: &[ConnectionType],
+      #[case] expected: &[ConnectionType],
+   ) {
       let mut connection_types = ConnectionTypes::new();
 
-      connection_types.insert(ConnectionType::Cellular);
-      connection_types.insert(ConnectionType::Unknown);
-      connection_types.insert(ConnectionType::Wifi);
-      connection_types.insert(ConnectionType::Cellular);
-      connection_types.insert(ConnectionType::Ethernet);
+      for &connection_type in inserted {
+         connection_types.insert(connection_type);
+      }
 
-      assert_eq!(
-         connection_types.into_vec(),
-         vec![
-            ConnectionType::Wifi,
-            ConnectionType::Ethernet,
-            ConnectionType::Cellular,
-         ]
-      );
-   }
-
-   #[test]
-   fn connection_types_is_empty_when_only_unknown_was_inserted() {
-      let mut connection_types = ConnectionTypes::new();
-
-      connection_types.insert(ConnectionType::Unknown);
-
-      assert!(connection_types.into_vec().is_empty());
+      assert_eq!(connection_types.into_vec(), expected);
    }
 }

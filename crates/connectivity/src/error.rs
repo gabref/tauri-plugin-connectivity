@@ -90,90 +90,58 @@ impl From<windows::core::Error> for Error {
 #[cfg(test)]
 mod tests {
    use super::*;
+   use rstest::rstest;
 
-   #[test]
-   fn unsupported_error_displays_message() {
-      let err = Error::Unsupported;
-
-      assert_eq!(
-         err.to_string(),
-         "connection status detection is not supported on this platform"
-      );
-   }
-
-   #[test]
-   fn error_serializes_to_string() {
-      let err = Error::Unsupported;
-      let json = serde_json::to_value(&err).unwrap();
-
-      assert_eq!(
-         json,
-         "connection status detection is not supported on this platform"
-      );
-   }
-
-   #[test]
-   fn detection_failed_error_displays_message() {
-      let err = Error::DetectionFailed {
+   #[rstest]
+   #[case::unsupported(
+      Error::Unsupported,
+      "connection status detection is not supported on this platform"
+   )]
+   #[case::detection_failed_without_code(
+      Error::DetectionFailed {
          message: String::from("backend unavailable"),
          code: None,
-      };
-
-      assert_eq!(
-         err.to_string(),
-         "connection status detection failed: backend unavailable"
-      );
-   }
-
-   #[test]
-   fn detection_failed_error_serializes_to_string() {
-      let err = Error::DetectionFailed {
-         message: String::from("backend unavailable"),
-         code: Some(-1),
-      };
-      let json = serde_json::to_value(&err).unwrap();
-
-      assert_eq!(
-         json,
-         "connection status detection failed with native error code -1: backend unavailable"
-      );
-   }
-
-   #[test]
-   fn supported_connection_types_unsupported_error_displays_message() {
-      let err = Error::SupportedConnectionTypesUnsupported;
-
-      assert_eq!(
-         err.to_string(),
-         "supported connection type detection is not supported on this platform"
-      );
-   }
-
-   #[test]
-   fn supported_connection_types_detection_failed_error_displays_message() {
-      let err = Error::SupportedConnectionTypesDetectionFailed {
+      },
+      "connection status detection failed: backend unavailable"
+   )]
+   #[case::supported_connection_types_unsupported(
+      Error::SupportedConnectionTypesUnsupported,
+      "supported connection type detection is not supported on this platform"
+   )]
+   #[case::supported_connection_types_detection_failed_without_code(
+      Error::SupportedConnectionTypesDetectionFailed {
          message: String::from("backend unavailable"),
          code: None,
-      };
-
-      assert_eq!(
-         err.to_string(),
-         "supported connection type detection failed: backend unavailable"
-      );
+      },
+      "supported connection type detection failed: backend unavailable"
+   )]
+   fn error_displays_message(#[case] err: Error, #[case] expected: &str) {
+      assert_eq!(err.to_string(), expected);
    }
 
-   #[test]
-   fn supported_connection_types_detection_failed_error_serializes_to_string() {
-      let err = Error::SupportedConnectionTypesDetectionFailed {
+   #[rstest]
+   #[case::unsupported(
+      Error::Unsupported,
+      "connection status detection is not supported on this platform"
+   )]
+   #[case::detection_failed_with_code(
+      Error::DetectionFailed {
          message: String::from("backend unavailable"),
          code: Some(-1),
-      };
+      },
+      "connection status detection failed with native error code -1: backend unavailable"
+   )]
+   #[case::supported_connection_types_detection_failed_with_code(
+      Error::SupportedConnectionTypesDetectionFailed {
+         message: String::from("backend unavailable"),
+         code: Some(-1),
+      },
+      "supported connection type detection failed with native error code -1: backend unavailable"
+   )]
+   fn error_serializes_to_string(#[case] err: Error, #[case] expected: &str) {
       let json = serde_json::to_value(&err).unwrap();
 
-      assert_eq!(
-         json,
-         "supported connection type detection failed with native error code -1: backend unavailable"
-      );
+      assert_eq!(json, expected);
    }
 
    #[cfg(target_os = "windows")]

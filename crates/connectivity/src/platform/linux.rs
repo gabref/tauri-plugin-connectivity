@@ -924,6 +924,7 @@ fn path_has_exact_component(path: impl AsRef<Path>, marker: &str) -> bool {
 #[cfg(test)]
 mod tests {
    use super::*;
+   use rstest::rstest;
    use std::fs::{self, File};
    use std::io::Write;
    use std::os::unix::fs as unix_fs;
@@ -937,83 +938,69 @@ mod tests {
       assert_eq!(DBUS_METHOD_TIMEOUT, Duration::from_millis(500));
    }
 
-   #[test]
-   fn maps_connectivity_states() {
+   #[rstest]
+   #[case::full(NM_CONNECTIVITY_FULL, ConnectedState::Connected)]
+   #[case::none(NM_CONNECTIVITY_NONE, ConnectedState::Disconnected)]
+   #[case::portal(NM_CONNECTIVITY_PORTAL, ConnectedState::Constrained)]
+   #[case::limited(NM_CONNECTIVITY_LIMITED, ConnectedState::Constrained)]
+   #[case::unknown(0, ConnectedState::Unknown)]
+   #[case::unrecognized(99, ConnectedState::Unknown)]
+   fn maps_connectivity_states(#[case] connectivity: u32, #[case] expected: ConnectedState) {
+      assert_eq!(map_connectivity(connectivity), expected);
+   }
+
+   #[rstest]
+   #[case::connected_global(NM_STATE_CONNECTED_GLOBAL, ConnectedState::Connected)]
+   #[case::connected_site(60, ConnectedState::Disconnected)]
+   #[case::disconnected(20, ConnectedState::Disconnected)]
+   fn resolves_unknown_connectivity_from_global_state(
+      #[case] state: u32,
+      #[case] expected: ConnectedState,
+   ) {
+      assert_eq!(connectivity_state_from_global_state(state), expected);
+   }
+
+   #[rstest]
+   #[case::unknown(NM_METERED_UNKNOWN, None)]
+   #[case::yes(NM_METERED_YES, Some(true))]
+   #[case::no(NM_METERED_NO, Some(false))]
+   #[case::guess_yes(NM_METERED_GUESS_YES, Some(true))]
+   #[case::guess_no(NM_METERED_GUESS_NO, Some(false))]
+   #[case::unrecognized(99, None)]
+   fn maps_metered_states_without_collapsing_unknown(
+      #[case] metered: u32,
+      #[case] expected: Option<bool>,
+   ) {
+      assert_eq!(metered_status(metered), expected);
+   }
+
+   #[rstest]
+   #[case::ethernet(NM_DEVICE_TYPE_ETHERNET, ConnectionType::Ethernet)]
+   #[case::wifi(NM_DEVICE_TYPE_WIFI, ConnectionType::Wifi)]
+   #[case::modem(NM_DEVICE_TYPE_MODEM, ConnectionType::Cellular)]
+   #[case::unrecognized(999, ConnectionType::Unknown)]
+   fn maps_network_manager_device_types(
+      #[case] device_type: u32,
+      #[case] expected: ConnectionType,
+   ) {
+      assert_eq!(map_device_type(device_type), expected);
+   }
+
+   #[rstest]
+   #[case::wifi(ConnectionType::Wifi)]
+   #[case::ethernet(ConnectionType::Ethernet)]
+   #[case::unknown(ConnectionType::Unknown)]
+   fn treats_non_cellular_connection_types_as_not_roaming(#[case] connection_type: ConnectionType) {
       assert_eq!(
-         map_connectivity(NM_CONNECTIVITY_FULL),
-         ConnectedState::Connected
+         connection_type_roaming_status(connection_type, || {
+            panic!("non-cellular transport must not query ModemManager")
+         }),
+         Some(false)
       );
-      assert_eq!(
-         map_connectivity(NM_CONNECTIVITY_NONE),
-         ConnectedState::Disconnected
-      );
-      assert_eq!(
-         map_connectivity(NM_CONNECTIVITY_PORTAL),
-         ConnectedState::Constrained
-      );
-      assert_eq!(
-         map_connectivity(NM_CONNECTIVITY_LIMITED),
-         ConnectedState::Constrained
-      );
-      assert_eq!(map_connectivity(0), ConnectedState::Unknown);
-      assert_eq!(map_connectivity(99), ConnectedState::Unknown);
    }
 
    #[test]
-   fn resolves_unknown_connectivity_from_global_state() {
-      assert_eq!(
-         connectivity_state_from_global_state(NM_STATE_CONNECTED_GLOBAL),
-         ConnectedState::Connected
-      );
-      assert_eq!(
-         connectivity_state_from_global_state(60),
-         ConnectedState::Disconnected
-      );
-      assert_eq!(
-         connectivity_state_from_global_state(20),
-         ConnectedState::Disconnected
-      );
-   }
-
-   #[test]
-   fn maps_metered_states_without_collapsing_unknown() {
-      assert_eq!(metered_status(NM_METERED_UNKNOWN), None);
-      assert_eq!(metered_status(NM_METERED_YES), Some(true));
-      assert_eq!(metered_status(NM_METERED_NO), Some(false));
-      assert_eq!(metered_status(NM_METERED_GUESS_YES), Some(true));
-      assert_eq!(metered_status(NM_METERED_GUESS_NO), Some(false));
-      assert_eq!(metered_status(99), None);
-   }
-
-   #[test]
-   fn maps_network_manager_device_types() {
-      assert_eq!(
-         map_device_type(NM_DEVICE_TYPE_ETHERNET),
-         ConnectionType::Ethernet
-      );
-      assert_eq!(map_device_type(NM_DEVICE_TYPE_WIFI), ConnectionType::Wifi);
-      assert_eq!(
-         map_device_type(NM_DEVICE_TYPE_MODEM),
-         ConnectionType::Cellular
-      );
-      assert_eq!(map_device_type(999), ConnectionType::Unknown);
-   }
-
-   #[test]
-   fn treats_non_cellular_connection_types_as_not_roaming() {
-      for connection_type in [
-         ConnectionType::Wifi,
-         ConnectionType::Ethernet,
-         ConnectionType::Unknown,
-      ] {
-         assert_eq!(
-            connection_type_roaming_status(connection_type, || {
-               panic!("non-cellular transport must not query ModemManager")
-            }),
-            Some(false)
-         );
-      }
-
+   fn uses_cellular_status_for_cellular_connection_type() {
       assert_eq!(
          connection_type_roaming_status(ConnectionType::Cellular, || None),
          None
@@ -1094,32 +1081,27 @@ mod tests {
       );
    }
 
+   #[rstest]
+   #[case::unmetered_not_roaming(ConnectedState::Connected, Some(false), Some(false), Some(false))]
+   #[case::constrained_with_unknown_signals(ConnectedState::Constrained, None, None, Some(true))]
+   #[case::metered_roaming_unknown(ConnectedState::Connected, Some(true), None, Some(true))]
+   #[case::metered_unknown_roaming(ConnectedState::Connected, None, Some(true), Some(true))]
+   #[case::unmetered_roaming_unknown(ConnectedState::Connected, Some(false), None, None)]
+   #[case::metered_unknown_roaming_unknown(ConnectedState::Connected, None, None, None)]
+   fn combines_constraint_signals_without_collapsing_unknown(
+      #[case] connectivity_state: ConnectedState,
+      #[case] metered: Option<bool>,
+      #[case] roaming: Option<bool>,
+      #[case] expected: Option<bool>,
+   ) {
+      assert_eq!(
+         constrained_status(connectivity_state, metered, roaming),
+         expected
+      );
+   }
+
    #[test]
-   fn combines_constraint_signals_without_collapsing_unknown() {
-      assert_eq!(
-         constrained_status(ConnectedState::Connected, Some(false), Some(false)),
-         Some(false)
-      );
-      assert_eq!(
-         constrained_status(ConnectedState::Constrained, None, None),
-         Some(true)
-      );
-      assert_eq!(
-         constrained_status(ConnectedState::Connected, Some(true), None),
-         Some(true)
-      );
-      assert_eq!(
-         constrained_status(ConnectedState::Connected, None, Some(true)),
-         Some(true)
-      );
-      assert_eq!(
-         constrained_status(ConnectedState::Connected, Some(false), None),
-         None
-      );
-      assert_eq!(
-         constrained_status(ConnectedState::Connected, None, None),
-         None
-      );
+   fn global_state_fallback_is_not_constrained_when_unmetered_and_not_roaming() {
       assert_eq!(
          constrained_status(
             connectivity_state_from_global_state(NM_STATE_CONNECTED_GLOBAL),
@@ -1139,65 +1121,82 @@ mod tests {
       assert_eq!(details.connection_type, ConnectionType::Unknown);
    }
 
-   #[test]
-   fn maps_roaming_registration_states_without_collapsing_unknown() {
-      for registration_state in [
-         MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING,
-         MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING_SMS_ONLY,
-         MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING_CSFB_NOT_PREFERRED,
-      ] {
-         let roaming = roaming_status(registration_state);
+   #[rstest]
+   #[case::roaming(MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING)]
+   #[case::roaming_sms_only(MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING_SMS_ONLY)]
+   #[case::roaming_csfb_not_preferred(MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING_CSFB_NOT_PREFERRED)]
+   fn marks_roaming_registration_states_as_roaming_and_constrained(
+      #[case] registration_state: u32,
+   ) {
+      let roaming = roaming_status(registration_state);
 
-         assert_eq!(roaming, Some(true));
-         assert_eq!(
-            constrained_status(ConnectedState::Connected, Some(false), roaming),
-            Some(true)
-         );
-      }
-
-      assert_eq!(roaming_status(1), Some(false));
+      assert_eq!(roaming, Some(true));
       assert_eq!(
-         roaming_status(MM_MODEM_3GPP_REGISTRATION_STATE_UNKNOWN),
-         None
+         constrained_status(ConnectedState::Connected, Some(false), roaming),
+         Some(true)
       );
-      assert_eq!(roaming_status(99), None);
    }
 
-   #[test]
-   fn combines_multiple_policy_signals_conservatively() {
+   #[rstest]
+   #[case::home(1, Some(false))]
+   #[case::unknown(MM_MODEM_3GPP_REGISTRATION_STATE_UNKNOWN, None)]
+   #[case::unrecognized(99, None)]
+   fn maps_roaming_registration_states_without_collapsing_unknown(
+      #[case] registration_state: u32,
+      #[case] expected: Option<bool>,
+   ) {
+      assert_eq!(roaming_status(registration_state), expected);
+   }
+
+   #[rstest]
+   #[case::all_false(&[Some(false), Some(false)], Some(false))]
+   #[case::false_then_unknown(&[Some(false), None], None)]
+   #[case::unknown_then_false(&[None, Some(false)], None)]
+   #[case::all_unknown(&[None, None], None)]
+   #[case::true_then_unknown(&[Some(true), None], Some(true))]
+   #[case::unknown_then_true(&[None, Some(true)], Some(true))]
+   #[case::empty(&[], None)]
+   fn combines_multiple_policy_signals_conservatively(
+      #[case] states: &[Option<bool>],
+      #[case] expected: Option<bool>,
+   ) {
+      assert_eq!(combine_policy_states(states.iter().copied()), expected);
+   }
+
+   #[rstest]
+   #[case::modem_manager_modem("/org/freedesktop/ModemManager1/Modem/0", true)]
+   #[case::root("/", false)]
+   #[case::network_manager_device("/org/freedesktop/NetworkManager/Devices/0", false)]
+   fn validates_modem_manager_modem_paths(#[case] path: &str, #[case] expected: bool) {
+      assert_eq!(is_modem_manager_modem_path(path), expected);
+   }
+
+   #[rstest]
+   #[case::default_route_is_parsed(
+      "eth0\t00000000\t015018AC\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
+      Some("eth0")
+   )]
+   #[case::loopback_is_ignored("lo\t00000000\t00000000\t0003\t0\t0\t0\t00000000\t0\t0\t0\n", None)]
+   #[case::down_route_is_ignored(
+      "eth0\t00000000\t015018AC\t0002\t0\t0\t0\t00000000\t0\t0\t0\n",
+      None
+   )]
+   #[case::no_default_route_returns_none(
+      "eth0\t005018AC\t00000000\t0001\t0\t0\t0\t00F0FFFF\t0\t0\t0\n",
+      None
+   )]
+   #[case::malformed_row_is_ignored(
+      "malformed\neth0\t00000000\t015018AC\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
+      Some("eth0")
+   )]
+   fn finds_default_ipv4_route_interface(#[case] rows: &str, #[case] expected: Option<&str>) {
+      const HEADER: &str =
+         "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n";
+      let route_table = format!("{HEADER}{rows}");
+
       assert_eq!(
-         combine_policy_states([Some(false), Some(false)]),
-         Some(false)
-      );
-      assert_eq!(combine_policy_states([Some(false), None]), None);
-      assert_eq!(combine_policy_states([None, Some(false)]), None);
-      assert_eq!(combine_policy_states([None, None]), None);
-      assert_eq!(combine_policy_states([Some(true), None]), Some(true));
-      assert_eq!(combine_policy_states([None, Some(true)]), Some(true));
-      assert_eq!(combine_policy_states([]), None);
-   }
-
-   #[test]
-   fn validates_modem_manager_modem_paths() {
-      assert!(is_modem_manager_modem_path(
-         "/org/freedesktop/ModemManager1/Modem/0"
-      ));
-      assert!(!is_modem_manager_modem_path("/"));
-      assert!(!is_modem_manager_modem_path(
-         "/org/freedesktop/NetworkManager/Devices/0"
-      ));
-   }
-
-   #[test]
-   fn parses_default_ipv4_route_interface() {
-      let route_table = "\
-Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT
-eth0\t00000000\t015018AC\t0003\t0\t0\t0\t00000000\t0\t0\t0
-";
-
-      assert_eq!(
-         default_ipv4_route_interface(route_table),
-         Some("eth0".into())
+         default_ipv4_route_interface(&route_table).as_deref(),
+         expected
       );
    }
 
@@ -1220,136 +1219,57 @@ eth0\t00000000\t015018AC\t0003\t0\t0\t0\t00000000\t0\t0\t0
       assert_eq!(status.connection_type, ConnectionType::Ethernet);
    }
 
-   #[test]
-   fn ignores_loopback_default_route() {
-      let route_table = "\
-Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT
-lo\t00000000\t00000000\t0003\t0\t0\t0\t00000000\t0\t0\t0
-";
-
-      assert_eq!(default_ipv4_route_interface(route_table), None);
-   }
-
-   #[test]
-   fn ignores_down_default_route() {
-      let route_table = "\
-Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT
-eth0\t00000000\t015018AC\t0002\t0\t0\t0\t00000000\t0\t0\t0
-";
-
-      assert_eq!(default_ipv4_route_interface(route_table), None);
-   }
-
-   #[test]
-   fn returns_none_without_default_route() {
-      let route_table = "\
-Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT
-eth0\t005018AC\t00000000\t0001\t0\t0\t0\t00F0FFFF\t0\t0\t0
-";
-
-      assert_eq!(default_ipv4_route_interface(route_table), None);
-   }
-
-   #[test]
-   fn ignores_malformed_route_rows() {
-      let route_table = "\
-Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT
-malformed
-eth0\t00000000\t015018AC\t0003\t0\t0\t0\t00000000\t0\t0\t0
-";
-
+   #[rstest]
+   #[case::default_route_is_parsed(
+      "00000000000000000000000000000000 00 00000000000000000000000000000000 00 \
+       fe800000000000000000000000000001 00000400 00000000 00000000 00000003 eth0\n",
+      Some("eth0")
+   )]
+   #[case::loopback_is_ignored(
+      "00000000000000000000000000000000 00 00000000000000000000000000000000 00 \
+       00000000000000000000000000000000 ffffffff 00000001 00000000 00200200 lo\n",
+      None
+   )]
+   #[case::down_route_is_ignored(
+      "00000000000000000000000000000000 00 00000000000000000000000000000000 00 \
+       fe800000000000000000000000000001 00000400 00000000 00000000 00000002 eth0\n",
+      None
+   )]
+   #[case::no_default_route_returns_none(
+      "fe800000000000000000000000000000 40 00000000000000000000000000000000 00 \
+       00000000000000000000000000000000 00000100 00000001 00000000 00000001 eth0\n",
+      None
+   )]
+   #[case::malformed_row_is_ignored(
+      "malformed\n\
+       00000000000000000000000000000000 00 00000000000000000000000000000000 00 \
+       fe800000000000000000000000000001 00000400 00000000 00000000 00000003 eth0\n",
+      Some("eth0")
+   )]
+   fn finds_default_ipv6_route_interface(
+      #[case] route_table: &str,
+      #[case] expected: Option<&str>,
+   ) {
       assert_eq!(
-         default_ipv4_route_interface(route_table),
-         Some("eth0".into())
+         default_ipv6_route_interface(route_table).as_deref(),
+         expected
       );
    }
 
-   #[test]
-   fn parses_ipv6_default_route_interface() {
-      let route_table = "\
-00000000000000000000000000000000 00 00000000000000000000000000000000 00 fe800000000000000000000000000001 00000400 00000000 00000000 00000003 eth0
-";
-
-      assert_eq!(
-         default_ipv6_route_interface(route_table),
-         Some("eth0".into())
-      );
-   }
-
-   #[test]
-   fn ignores_ipv6_loopback_default_route() {
-      let route_table = "\
-00000000000000000000000000000000 00 00000000000000000000000000000000 00 00000000000000000000000000000000 ffffffff 00000001 00000000 00200200 lo
-";
-
-      assert_eq!(default_ipv6_route_interface(route_table), None);
-   }
-
-   #[test]
-   fn ignores_down_ipv6_default_route() {
-      let route_table = "\
-00000000000000000000000000000000 00 00000000000000000000000000000000 00 fe800000000000000000000000000001 00000400 00000000 00000000 00000002 eth0
-";
-
-      assert_eq!(default_ipv6_route_interface(route_table), None);
-   }
-
-   #[test]
-   fn returns_none_without_ipv6_default_route() {
-      let route_table = "\
-fe800000000000000000000000000000 40 00000000000000000000000000000000 00 00000000000000000000000000000000 00000100 00000001 00000000 00000001 eth0
-";
-
-      assert_eq!(default_ipv6_route_interface(route_table), None);
-   }
-
-   #[test]
-   fn ignores_malformed_ipv6_route_rows() {
-      let route_table = "\
-malformed
-00000000000000000000000000000000 00 00000000000000000000000000000000 00 fe800000000000000000000000000001 00000400 00000000 00000000 00000003 eth0
-";
-
-      assert_eq!(
-         default_ipv6_route_interface(route_table),
-         Some("eth0".into())
-      );
-   }
-
-   #[test]
-   fn infers_wifi_from_wireless_directory() {
-      let temp = TempDir::new();
-      let iface = temp.path().join("wlp0s20f3");
-      fs::create_dir_all(iface.join("wireless")).unwrap();
-
-      assert_eq!(
-         infer_transport_from_sysfs(temp.path(), "wlp0s20f3"),
-         ConnectionType::Wifi
-      );
-   }
-
-   #[test]
-   fn infers_wifi_from_ieee80211_marker() {
+   #[rstest]
+   #[case::wireless_directory_is_wifi("wireless", ConnectionType::Wifi)]
+   #[case::ieee80211_marker_is_wifi("ieee80211", ConnectionType::Wifi)]
+   #[case::phy80211_marker_is_wifi("phy80211", ConnectionType::Wifi)]
+   #[case::wwan_marker_is_cellular("device/wwan", ConnectionType::Cellular)]
+   fn infers_transport_from_sysfs_marker_directory(
+      #[case] marker: &str,
+      #[case] expected: ConnectionType,
+   ) {
       let temp = TempDir::new();
       let iface = temp.path().join("net0");
-      fs::create_dir_all(iface.join("ieee80211")).unwrap();
+      fs::create_dir_all(iface.join(marker)).unwrap();
 
-      assert_eq!(
-         infer_transport_from_sysfs(temp.path(), "net0"),
-         ConnectionType::Wifi
-      );
-   }
-
-   #[test]
-   fn infers_wifi_from_phy80211_marker() {
-      let temp = TempDir::new();
-      let iface = temp.path().join("net0");
-      fs::create_dir_all(iface.join("phy80211")).unwrap();
-
-      assert_eq!(
-         infer_transport_from_sysfs(temp.path(), "net0"),
-         ConnectionType::Wifi
-      );
+      assert_eq!(infer_transport_from_sysfs(temp.path(), "net0"), expected);
    }
 
    #[test]
@@ -1363,18 +1283,6 @@ malformed
       assert_eq!(
          infer_transport_from_sysfs(&sys_class_net, "net0"),
          ConnectionType::Ethernet
-      );
-   }
-
-   #[test]
-   fn infers_cellular_from_wwan_marker() {
-      let temp = TempDir::new();
-      let iface = temp.path().join("net0");
-      fs::create_dir_all(iface.join("device").join("wwan")).unwrap();
-
-      assert_eq!(
-         infer_transport_from_sysfs(temp.path(), "net0"),
-         ConnectionType::Cellular
       );
    }
 
@@ -1394,17 +1302,19 @@ malformed
       );
    }
 
-   #[test]
-   fn infers_ethernet_from_arphrd_ether_type() {
+   #[rstest]
+   #[case::arphrd_ether_type_is_ethernet("1\n", ConnectionType::Ethernet)]
+   #[case::no_transport_signal_is_unknown("772\n", ConnectionType::Unknown)]
+   fn infers_transport_from_sysfs_interface_type(
+      #[case] interface_type: &str,
+      #[case] expected: ConnectionType,
+   ) {
       let temp = TempDir::new();
-      let iface = temp.path().join("enp0s1");
+      let iface = temp.path().join("net0");
       fs::create_dir_all(&iface).unwrap();
-      write_file(iface.join("type"), "1\n");
+      write_file(iface.join("type"), interface_type);
 
-      assert_eq!(
-         infer_transport_from_sysfs(temp.path(), "enp0s1"),
-         ConnectionType::Ethernet
-      );
+      assert_eq!(infer_transport_from_sysfs(temp.path(), "net0"), expected);
    }
 
    #[test]
@@ -1480,19 +1390,6 @@ malformed
       let missing_path = temp.path().join("missing");
 
       assert!(supported_types_from_sysfs(&missing_path).is_err());
-   }
-
-   #[test]
-   fn returns_unknown_when_sysfs_has_no_transport_signal() {
-      let temp = TempDir::new();
-      let iface = temp.path().join("net0");
-      fs::create_dir_all(&iface).unwrap();
-      write_file(iface.join("type"), "772\n");
-
-      assert_eq!(
-         infer_transport_from_sysfs(temp.path(), "net0"),
-         ConnectionType::Unknown
-      );
    }
 
    fn write_file(path: impl AsRef<Path>, contents: &str) {
