@@ -290,23 +290,19 @@ fn assemble_status(
 #[cfg(test)]
 mod tests {
    use super::*;
+   use rstest::rstest;
 
-   #[test]
-   fn maps_interface_type_to_connection_type() {
-      assert_eq!(
-         map_interface_type(NW_INTERFACE_TYPE_WIFI),
-         ConnectionType::Wifi
-      );
-      assert_eq!(
-         map_interface_type(NW_INTERFACE_TYPE_WIRED),
-         ConnectionType::Ethernet
-      );
-      assert_eq!(
-         map_interface_type(NW_INTERFACE_TYPE_CELLULAR),
-         ConnectionType::Cellular
-      );
-      assert_eq!(map_interface_type(0), ConnectionType::Unknown);
-      assert_eq!(map_interface_type(4), ConnectionType::Unknown);
+   #[rstest]
+   #[case::wifi(NW_INTERFACE_TYPE_WIFI, ConnectionType::Wifi)]
+   #[case::wired(NW_INTERFACE_TYPE_WIRED, ConnectionType::Ethernet)]
+   #[case::cellular(NW_INTERFACE_TYPE_CELLULAR, ConnectionType::Cellular)]
+   #[case::other(0, ConnectionType::Unknown)]
+   #[case::loopback(4, ConnectionType::Unknown)]
+   fn maps_interface_type_to_connection_type(
+      #[case] interface_type: i32,
+      #[case] expected: ConnectionType,
+   ) {
+      assert_eq!(map_interface_type(interface_type), expected);
    }
 
    #[test]
@@ -340,20 +336,27 @@ mod tests {
       );
    }
 
-   #[test]
-   fn resolved_connection_types_preserves_first_type_as_primary() {
+   #[rstest]
+   #[case::first_type_is_preserved_as_primary(
+      &[ConnectionType::Ethernet, ConnectionType::Wifi],
+      (ConnectionType::Ethernet, vec![ConnectionType::Wifi, ConnectionType::Ethernet])
+   )]
+   #[case::unknown_primary_is_kept_but_omitted_from_supported(
+      &[ConnectionType::Unknown, ConnectionType::Wifi],
+      (ConnectionType::Unknown, vec![ConnectionType::Wifi])
+   )]
+   #[case::empty_uses_defaults(&[], (ConnectionType::Unknown, Vec::new()))]
+   fn resolved_connection_types_reports_primary_and_supported_types(
+      #[case] recorded_types: &[ConnectionType],
+      #[case] expected: (ConnectionType, Vec<ConnectionType>),
+   ) {
       let mut resolved_types = ResolvedConnectionTypes::default();
 
-      resolved_types.record(ConnectionType::Ethernet);
-      resolved_types.record(ConnectionType::Wifi);
+      for &connection_type in recorded_types {
+         resolved_types.record(connection_type);
+      }
 
-      assert_eq!(
-         resolved_types.into_parts(),
-         (
-            ConnectionType::Ethernet,
-            vec![ConnectionType::Wifi, ConnectionType::Ethernet],
-         )
-      );
+      assert_eq!(resolved_types.into_parts(), expected);
    }
 
    #[test]
@@ -369,27 +372,6 @@ mod tests {
       assert_eq!(
          supported_types,
          vec![ConnectionType::Wifi, ConnectionType::Ethernet]
-      );
-   }
-
-   #[test]
-   fn resolved_connection_types_keeps_unknown_primary_but_omits_it_from_supported() {
-      let mut resolved_types = ResolvedConnectionTypes::default();
-
-      resolved_types.record(ConnectionType::Unknown);
-      resolved_types.record(ConnectionType::Wifi);
-
-      assert_eq!(
-         resolved_types.into_parts(),
-         (ConnectionType::Unknown, vec![ConnectionType::Wifi])
-      );
-   }
-
-   #[test]
-   fn resolved_connection_types_defaults_when_empty() {
-      assert_eq!(
-         ResolvedConnectionTypes::default().into_parts(),
-         (ConnectionType::Unknown, Vec::new())
       );
    }
 
@@ -414,12 +396,14 @@ mod tests {
       );
    }
 
-   #[test]
-   fn only_satisfied_status_is_connected() {
-      assert!(is_connected_status(NW_PATH_STATUS_SATISFIED));
-
-      for status in [0, 2, 3, i32::MIN, i32::MAX] {
-         assert!(!is_connected_status(status));
-      }
+   #[rstest]
+   #[case::satisfied(NW_PATH_STATUS_SATISFIED, true)]
+   #[case::invalid(0, false)]
+   #[case::unsatisfied(2, false)]
+   #[case::satisfiable(3, false)]
+   #[case::i32_min(i32::MIN, false)]
+   #[case::i32_max(i32::MAX, false)]
+   fn only_satisfied_status_is_connected(#[case] status: i32, #[case] expected: bool) {
+      assert_eq!(is_connected_status(status), expected);
    }
 }

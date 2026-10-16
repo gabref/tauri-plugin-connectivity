@@ -416,94 +416,74 @@ fn adapter_buffer(size_in_bytes: u32) -> Vec<IP_ADAPTER_ADDRESSES_LH> {
 #[cfg(test)]
 mod tests {
    use super::*;
+   use rstest::rstest;
    use windows::core::{Error, HRESULT};
 
-   #[test]
-   fn detects_internet_access_for_full_and_constrained_levels() {
-      assert!(has_network_connectivity(
-         NetworkConnectivityLevel::InternetAccess
-      ));
-      assert!(has_network_connectivity(
-         NetworkConnectivityLevel::ConstrainedInternetAccess
-      ));
-      assert!(!has_network_connectivity(NetworkConnectivityLevel::None));
-      assert!(!has_network_connectivity(
-         NetworkConnectivityLevel::LocalAccess
-      ));
+   #[rstest]
+   #[case::internet_access(NetworkConnectivityLevel::InternetAccess, true)]
+   #[case::constrained_internet_access(NetworkConnectivityLevel::ConstrainedInternetAccess, true)]
+   #[case::none(NetworkConnectivityLevel::None, false)]
+   #[case::local_access(NetworkConnectivityLevel::LocalAccess, false)]
+   fn detects_internet_access_for_full_and_constrained_levels(
+      #[case] connectivity_level: NetworkConnectivityLevel,
+      #[case] expected: bool,
+   ) {
+      assert_eq!(has_network_connectivity(connectivity_level), expected);
    }
 
-   #[test]
-   fn treats_constrained_internet_access_as_constrained() {
-      assert!(is_constrained_connectivity(
-         NetworkConnectivityLevel::ConstrainedInternetAccess
-      ));
-      assert!(!is_constrained_connectivity(
-         NetworkConnectivityLevel::InternetAccess
-      ));
+   #[rstest]
+   #[case::constrained_internet_access(NetworkConnectivityLevel::ConstrainedInternetAccess, true)]
+   #[case::internet_access(NetworkConnectivityLevel::InternetAccess, false)]
+   fn treats_constrained_internet_access_as_constrained(
+      #[case] connectivity_level: NetworkConnectivityLevel,
+      #[case] expected: bool,
+   ) {
+      assert_eq!(is_constrained_connectivity(connectivity_level), expected);
    }
 
-   #[test]
-   fn maps_metered_cost_types_without_collapsing_unknown() {
-      assert_eq!(metered_status(NetworkCostType::Unknown), None);
-      assert_eq!(metered_status(NetworkCostType::Unrestricted), Some(false));
-      assert_eq!(metered_status(NetworkCostType::Fixed), Some(true));
-      assert_eq!(metered_status(NetworkCostType::Variable), Some(true));
+   #[rstest]
+   #[case::unknown(NetworkCostType::Unknown, None)]
+   #[case::unrestricted(NetworkCostType::Unrestricted, Some(false))]
+   #[case::fixed(NetworkCostType::Fixed, Some(true))]
+   #[case::variable(NetworkCostType::Variable, Some(true))]
+   fn maps_metered_cost_types_without_collapsing_unknown(
+      #[case] cost_type: NetworkCostType,
+      #[case] expected: Option<bool>,
+   ) {
+      assert_eq!(metered_status(cost_type), expected);
    }
 
-   #[test]
-   fn treats_empty_windows_error_as_missing_profile() {
-      assert!(is_missing_profile_error(&Error::empty()));
+   #[rstest]
+   #[case::empty_windows_error_is_missing_profile(Error::empty(), true)]
+   #[case::success_false_hresult_is_not_missing_profile(Error::from_hresult(HRESULT(1)), false)]
+   #[case::failure_hresult_is_not_missing_profile(Error::from_hresult(HRESULT(-1)), false)]
+   fn detects_missing_profile_error(#[case] error: Error, #[case] expected: bool) {
+      assert_eq!(is_missing_profile_error(&error), expected);
    }
 
-   #[test]
-   fn does_not_treat_success_false_hresult_as_missing_profile() {
-      assert!(!is_missing_profile_error(&Error::from_hresult(HRESULT(1))));
+   #[rstest]
+   #[case::ethernet(IANA_ETHERNET_CSMACD, ConnectionType::Ethernet)]
+   #[case::wifi(IANA_IEEE80211, ConnectionType::Wifi)]
+   #[case::wwanpp(IANA_WWANPP, ConnectionType::Cellular)]
+   #[case::wwanpp2(IANA_WWANPP2, ConnectionType::Cellular)]
+   #[case::unrecognized(999, ConnectionType::Unknown)]
+   fn maps_iana_interface_types(
+      #[case] iana_interface_type: u32,
+      #[case] expected: ConnectionType,
+   ) {
+      assert_eq!(map_iana_interface_type(iana_interface_type), expected);
    }
 
-   #[test]
-   fn does_not_treat_failure_hresult_as_missing_profile() {
-      assert!(!is_missing_profile_error(&Error::from_hresult(HRESULT(-1))));
-   }
-
-   #[test]
-   fn maps_ethernet_interface_type() {
-      assert_eq!(
-         map_iana_interface_type(IANA_ETHERNET_CSMACD),
-         ConnectionType::Ethernet
-      );
-   }
-
-   #[test]
-   fn maps_wifi_interface_type() {
-      assert_eq!(
-         map_iana_interface_type(IANA_IEEE80211),
-         ConnectionType::Wifi
-      );
-   }
-
-   #[test]
-   fn maps_wwan_interface_types() {
-      assert_eq!(
-         map_iana_interface_type(IANA_WWANPP),
-         ConnectionType::Cellular
-      );
-      assert_eq!(
-         map_iana_interface_type(IANA_WWANPP2),
-         ConnectionType::Cellular
-      );
-   }
-
-   #[test]
-   fn maps_unrecognized_interface_type_to_unknown() {
-      assert_eq!(map_iana_interface_type(999), ConnectionType::Unknown);
-   }
-
-   #[test]
-   fn queries_physical_status_only_for_supported_interface_types() {
-      assert!(is_supported_interface_type(IANA_ETHERNET_CSMACD));
-      assert!(is_supported_interface_type(IANA_IEEE80211));
-      assert!(is_supported_interface_type(IANA_WWANPP));
-      assert!(!is_supported_interface_type(999));
+   #[rstest]
+   #[case::ethernet(IANA_ETHERNET_CSMACD, true)]
+   #[case::wifi(IANA_IEEE80211, true)]
+   #[case::wwanpp(IANA_WWANPP, true)]
+   #[case::unrecognized(999, false)]
+   fn queries_physical_status_only_for_supported_interface_types(
+      #[case] iana_interface_type: u32,
+      #[case] expected: bool,
+   ) {
+      assert_eq!(is_supported_interface_type(iana_interface_type), expected);
    }
 
    #[test]
@@ -535,57 +515,39 @@ mod tests {
       );
    }
 
-   #[test]
-   fn identifies_physical_interfaces_from_status_flags() {
-      assert!(!is_physical_interface(0));
-      assert!(!is_physical_interface(HARDWARE_INTERFACE_FLAG));
-      assert!(!is_physical_interface(CONNECTOR_PRESENT_FLAG));
-      assert!(is_physical_interface(
-         HARDWARE_INTERFACE_FLAG | CONNECTOR_PRESENT_FLAG
-      ));
+   #[rstest]
+   #[case::no_flags(0, false)]
+   #[case::hardware_only(HARDWARE_INTERFACE_FLAG, false)]
+   #[case::connector_only(CONNECTOR_PRESENT_FLAG, false)]
+   #[case::hardware_and_connector(HARDWARE_INTERFACE_FLAG | CONNECTOR_PRESENT_FLAG, true)]
+   fn identifies_physical_interfaces_from_status_flags(#[case] flags: u8, #[case] expected: bool) {
+      assert_eq!(is_physical_interface(flags), expected);
    }
 
-   #[test]
-   fn classifies_native_no_data_as_empty_enumeration() {
-      assert_eq!(classify_enumeration_result(232, 0, 232), Ok(false));
+   #[rstest]
+   #[case::no_data_is_empty_enumeration(232, Ok(false))]
+   #[case::success_is_populated_enumeration(0, Ok(true))]
+   #[case::failure_is_preserved(5, Err(5))]
+   fn classifies_native_enumeration_results(
+      #[case] result: u32,
+      #[case] expected: std::result::Result<bool, u32>,
+   ) {
+      assert_eq!(classify_enumeration_result(result, 0, 232), expected);
    }
 
-   #[test]
-   fn classifies_native_success_as_populated_enumeration() {
-      assert_eq!(classify_enumeration_result(0, 0, 232), Ok(true));
-   }
-
-   #[test]
-   fn preserves_native_enumeration_failures() {
-      assert_eq!(classify_enumeration_result(5, 0, 232), Err(5));
-   }
-
-   #[test]
-   fn reports_failure_when_every_item_query_fails() {
-      let results = [Err::<Option<(u32, bool)>, _>(1168), Err(1168)];
-
-      assert_eq!(collect_successful_items(results), Err(1168));
-   }
-
-   #[test]
-   fn reports_failure_when_successful_queries_find_no_usable_items() {
-      let results = [Err::<Option<(u32, bool)>, _>(1168), Ok(None)];
-
-      assert_eq!(collect_successful_items(results), Err(1168));
-   }
-
-   #[test]
-   fn returns_empty_when_all_item_queries_succeed_without_items() {
-      let results = [Ok::<Option<(u32, bool)>, u32>(None), Ok(None)];
-
-      assert_eq!(collect_successful_items(results), Ok(Vec::new()));
-   }
-
-   #[test]
-   fn keeps_partial_results_when_an_item_query_succeeds() {
-      let results = [Err(1168), Ok(Some((71, true)))];
-
-      assert_eq!(collect_successful_items(results), Ok(vec![(71, true)]));
+   #[rstest]
+   #[case::every_item_query_fails_reports_failure(&[Err(1168), Err(1168)], Err(1168))]
+   #[case::success_without_usable_items_reports_failure(&[Err(1168), Ok(None)], Err(1168))]
+   #[case::all_succeed_without_items_returns_empty(&[Ok(None), Ok(None)], Ok(Vec::new()))]
+   #[case::one_item_query_succeeds_keeps_partial_results(
+      &[Err(1168), Ok(Some((71, true)))],
+      Ok(vec![(71, true)])
+   )]
+   fn collects_successful_items(
+      #[case] results: &[std::result::Result<Option<(u32, bool)>, u32>],
+      #[case] expected: std::result::Result<Vec<(u32, bool)>, u32>,
+   ) {
+      assert_eq!(collect_successful_items(results.iter().copied()), expected);
    }
 
    #[test]
