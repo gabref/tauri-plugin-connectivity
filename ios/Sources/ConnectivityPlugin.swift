@@ -100,6 +100,6 @@ class ConnectivityPlugin: Plugin {
 }
 
 @_cdecl("init_plugin_connectivity")
-func initPlugin() -> Plugin {
+public func initPlugin() -> Plugin {
    return ConnectivityPlugin()
 }
