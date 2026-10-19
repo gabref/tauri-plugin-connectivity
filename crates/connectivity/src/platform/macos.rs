@@ -292,12 +292,20 @@ mod tests {
    use super::*;
    use rstest::rstest;
 
+   // Members of Apple's `nw_path_status_t` and `nw_interface_type_t` enums
+   // that only the tests use.
+   const NW_PATH_STATUS_INVALID: i32 = 0;
+   const NW_PATH_STATUS_UNSATISFIED: i32 = 2;
+   const NW_PATH_STATUS_SATISFIABLE: i32 = 3;
+   const NW_INTERFACE_TYPE_OTHER: i32 = 0;
+   const NW_INTERFACE_TYPE_LOOPBACK: i32 = 4;
+
    #[rstest]
    #[case::wifi(NW_INTERFACE_TYPE_WIFI, ConnectionType::Wifi)]
    #[case::wired(NW_INTERFACE_TYPE_WIRED, ConnectionType::Ethernet)]
    #[case::cellular(NW_INTERFACE_TYPE_CELLULAR, ConnectionType::Cellular)]
-   #[case::other(0, ConnectionType::Unknown)]
-   #[case::loopback(4, ConnectionType::Unknown)]
+   #[case::other(NW_INTERFACE_TYPE_OTHER, ConnectionType::Unknown)]
+   #[case::loopback(NW_INTERFACE_TYPE_LOOPBACK, ConnectionType::Unknown)]
    fn maps_interface_type_to_connection_type(
       #[case] interface_type: i32,
       #[case] expected: ConnectionType,
@@ -398,9 +406,9 @@ mod tests {
 
    #[rstest]
    #[case::satisfied(NW_PATH_STATUS_SATISFIED, true)]
-   #[case::invalid(0, false)]
-   #[case::unsatisfied(2, false)]
-   #[case::satisfiable(3, false)]
+   #[case::invalid(NW_PATH_STATUS_INVALID, false)]
+   #[case::unsatisfied(NW_PATH_STATUS_UNSATISFIED, false)]
+   #[case::satisfiable(NW_PATH_STATUS_SATISFIABLE, false)]
    #[case::i32_min(i32::MIN, false)]
    #[case::i32_max(i32::MAX, false)]
    fn only_satisfied_status_is_connected(#[case] status: i32, #[case] expected: bool) {
