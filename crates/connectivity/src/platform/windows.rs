@@ -2,7 +2,7 @@ use tracing::{debug, warn};
 use windows::Networking::Connectivity::{
    ConnectionCost, ConnectionProfile, NetworkConnectivityLevel, NetworkCostType, NetworkInformation,
 };
-use windows::Win32::Foundation::{ERROR_BUFFER_OVERFLOW, ERROR_NO_DATA, NO_ERROR};
+use windows::Win32::Foundation::{ERROR_BUFFER_OVERFLOW, ERROR_NO_DATA, NO_ERROR, S_OK};
 use windows::Win32::NetworkManagement::IpHelper::{
    GAA_FLAG_INCLUDE_ALL_INTERFACES, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER,
    GAA_FLAG_SKIP_MULTICAST, GAA_FLAG_SKIP_UNICAST, GetAdaptersAddresses, GetIfEntry2,
@@ -165,11 +165,11 @@ pub(crate) fn supported_connection_types() -> Result<Vec<ConnectionType>> {
 }
 
 /// The WinRT binding can return a success-coded error when the API succeeds but
-/// does not provide a preferred internet connection profile. Treat only S_OK as
+/// does not provide a preferred internet connection profile. Treat only `S_OK` as
 /// this missing-profile case; other success HRESULTs are informational results
 /// that should not be silently swallowed.
 fn is_missing_profile_error(error: &windows::core::Error) -> bool {
-   error.code() == windows::core::HRESULT(0)
+   error.code() == S_OK
 }
 
 /// Treat full or constrained internet access as connected.
@@ -417,6 +417,7 @@ fn adapter_buffer(size_in_bytes: u32) -> Vec<IP_ADAPTER_ADDRESSES_LH> {
 mod tests {
    use super::*;
    use rstest::rstest;
+   use windows::Win32::Foundation::{ERROR_INVALID_PARAMETER, S_FALSE};
    use windows::core::{Error, HRESULT};
 
    #[rstest]
@@ -455,7 +456,7 @@ mod tests {
 
    #[rstest]
    #[case::empty_windows_error_is_missing_profile(Error::empty(), true)]
-   #[case::success_false_hresult_is_not_missing_profile(Error::from_hresult(HRESULT(1)), false)]
+   #[case::success_false_hresult_is_not_missing_profile(Error::from_hresult(S_FALSE), false)]
    #[case::failure_hresult_is_not_missing_profile(Error::from_hresult(HRESULT(-1)), false)]
    fn detects_missing_profile_error(#[case] error: Error, #[case] expected: bool) {
       assert_eq!(is_missing_profile_error(&error), expected);
@@ -525,14 +526,17 @@ mod tests {
    }
 
    #[rstest]
-   #[case::no_data_is_empty_enumeration(232, Ok(false))]
-   #[case::success_is_populated_enumeration(0, Ok(true))]
-   #[case::failure_is_preserved(5, Err(5))]
+   #[case::no_data_is_empty_enumeration(ERROR_NO_DATA.0, Ok(false))]
+   #[case::success_is_populated_enumeration(NO_ERROR.0, Ok(true))]
+   #[case::failure_is_preserved(ERROR_INVALID_PARAMETER.0, Err(ERROR_INVALID_PARAMETER.0))]
    fn classifies_native_enumeration_results(
       #[case] result: u32,
       #[case] expected: std::result::Result<bool, u32>,
    ) {
-      assert_eq!(classify_enumeration_result(result, 0, 232), expected);
+      assert_eq!(
+         classify_enumeration_result(result, NO_ERROR.0, ERROR_NO_DATA.0),
+         expected
+      );
    }
 
    #[rstest]

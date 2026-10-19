@@ -699,7 +699,7 @@ fn roaming_status(registration_state: u32) -> Option<bool> {
       MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING
       | MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING_SMS_ONLY
       | MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING_CSFB_NOT_PREFERRED => Some(true),
-      0..=MM_MODEM_3GPP_REGISTRATION_STATE_ATTACHED_RLOS => Some(false),
+      ..=MM_MODEM_3GPP_REGISTRATION_STATE_ATTACHED_RLOS => Some(false),
       _ => None,
    }
 }
@@ -931,6 +931,14 @@ mod tests {
    use std::path::PathBuf;
    use std::sync::atomic::{AtomicUsize, Ordering};
 
+   // NetworkManager and ModemManager enum members, and kernel ARPHRD values,
+   // that only the tests use.
+   const NM_CONNECTIVITY_UNKNOWN: u32 = 0;
+   const NM_STATE_DISCONNECTED: u32 = 20;
+   const NM_STATE_CONNECTED_SITE: u32 = 60;
+   const MM_MODEM_3GPP_REGISTRATION_STATE_HOME: u32 = 1;
+   const LINUX_ARPHRD_LOOPBACK: u32 = 772;
+
    static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
    #[test]
@@ -943,7 +951,7 @@ mod tests {
    #[case::none(NM_CONNECTIVITY_NONE, ConnectedState::Disconnected)]
    #[case::portal(NM_CONNECTIVITY_PORTAL, ConnectedState::Constrained)]
    #[case::limited(NM_CONNECTIVITY_LIMITED, ConnectedState::Constrained)]
-   #[case::unknown(0, ConnectedState::Unknown)]
+   #[case::unknown(NM_CONNECTIVITY_UNKNOWN, ConnectedState::Unknown)]
    #[case::unrecognized(99, ConnectedState::Unknown)]
    fn maps_connectivity_states(#[case] connectivity: u32, #[case] expected: ConnectedState) {
       assert_eq!(map_connectivity(connectivity), expected);
@@ -951,8 +959,8 @@ mod tests {
 
    #[rstest]
    #[case::connected_global(NM_STATE_CONNECTED_GLOBAL, ConnectedState::Connected)]
-   #[case::connected_site(60, ConnectedState::Disconnected)]
-   #[case::disconnected(20, ConnectedState::Disconnected)]
+   #[case::connected_site(NM_STATE_CONNECTED_SITE, ConnectedState::Disconnected)]
+   #[case::disconnected(NM_STATE_DISCONNECTED, ConnectedState::Disconnected)]
    fn resolves_unknown_connectivity_from_global_state(
       #[case] state: u32,
       #[case] expected: ConnectedState,
@@ -1138,7 +1146,7 @@ mod tests {
    }
 
    #[rstest]
-   #[case::home(1, Some(false))]
+   #[case::home(MM_MODEM_3GPP_REGISTRATION_STATE_HOME, Some(false))]
    #[case::unknown(MM_MODEM_3GPP_REGISTRATION_STATE_UNKNOWN, None)]
    #[case::unrecognized(99, None)]
    fn maps_roaming_registration_states_without_collapsing_unknown(
@@ -1205,7 +1213,7 @@ mod tests {
       let temp = TempDir::new();
       let iface = temp.path().join("eth0");
       fs::create_dir_all(&iface).unwrap();
-      write_file(iface.join("type"), "1\n");
+      write_interface_type(&iface, LINUX_ARPHRD_ETHER);
       let route_table = "\
 Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT
 eth0\t00000000\t015018AC\t0003\t0\t0\t0\t00000000\t0\t0\t0
@@ -1278,7 +1286,7 @@ eth0\t00000000\t015018AC\t0003\t0\t0\t0\t00000000\t0\t0\t0
       let sys_class_net = temp.path().join("not80211-device");
       let iface = sys_class_net.join("net0");
       fs::create_dir_all(&iface).unwrap();
-      write_file(iface.join("type"), "1\n");
+      write_interface_type(&iface, LINUX_ARPHRD_ETHER);
 
       assert_eq!(
          infer_transport_from_sysfs(&sys_class_net, "net0"),
@@ -1294,7 +1302,7 @@ eth0\t00000000\t015018AC\t0003\t0\t0\t0\t00000000\t0\t0\t0
       fs::create_dir_all(iface.join("device")).unwrap();
       fs::create_dir_all(&subsystem_target).unwrap();
       unix_fs::symlink(&subsystem_target, iface.join("device").join("subsystem")).unwrap();
-      write_file(iface.join("type"), "1\n");
+      write_interface_type(&iface, LINUX_ARPHRD_ETHER);
 
       assert_eq!(
          infer_transport_from_sysfs(temp.path(), "net0"),
@@ -1303,16 +1311,16 @@ eth0\t00000000\t015018AC\t0003\t0\t0\t0\t00000000\t0\t0\t0
    }
 
    #[rstest]
-   #[case::arphrd_ether_type_is_ethernet("1\n", ConnectionType::Ethernet)]
-   #[case::no_transport_signal_is_unknown("772\n", ConnectionType::Unknown)]
+   #[case::arphrd_ether_type_is_ethernet(LINUX_ARPHRD_ETHER, ConnectionType::Ethernet)]
+   #[case::no_transport_signal_is_unknown(LINUX_ARPHRD_LOOPBACK, ConnectionType::Unknown)]
    fn infers_transport_from_sysfs_interface_type(
-      #[case] interface_type: &str,
+      #[case] interface_type: u32,
       #[case] expected: ConnectionType,
    ) {
       let temp = TempDir::new();
       let iface = temp.path().join("net0");
       fs::create_dir_all(&iface).unwrap();
-      write_file(iface.join("type"), interface_type);
+      write_interface_type(&iface, interface_type);
 
       assert_eq!(infer_transport_from_sysfs(temp.path(), "net0"), expected);
    }
@@ -1324,7 +1332,7 @@ eth0\t00000000\t015018AC\t0003\t0\t0\t0\t00000000\t0\t0\t0
       let virtual_iface = temp.path().join("virtual").join("net").join("veth0");
       fs::create_dir_all(physical.join("wireless")).unwrap();
       fs::create_dir_all(&virtual_iface).unwrap();
-      write_file(virtual_iface.join("type"), "1\n");
+      write_interface_type(&virtual_iface, LINUX_ARPHRD_ETHER);
       unix_fs::symlink(&virtual_iface, temp.path().join("veth0")).unwrap();
 
       assert_eq!(
@@ -1338,7 +1346,7 @@ eth0\t00000000\t015018AC\t0003\t0\t0\t0\t00000000\t0\t0\t0
       let temp = TempDir::new();
       let iface = temp.path().join("net0");
       fs::create_dir_all(&iface).unwrap();
-      write_file(iface.join("type"), "772\n");
+      write_interface_type(&iface, LINUX_ARPHRD_LOOPBACK);
 
       assert_eq!(
          supported_types_from_sysfs(temp.path()).unwrap(),
@@ -1395,6 +1403,10 @@ eth0\t00000000\t015018AC\t0003\t0\t0\t0\t00000000\t0\t0\t0
    fn write_file(path: impl AsRef<Path>, contents: &str) {
       let mut file = File::create(path).unwrap();
       file.write_all(contents.as_bytes()).unwrap();
+   }
+
+   fn write_interface_type(iface: &Path, interface_type: u32) {
+      write_file(iface.join("type"), &format!("{interface_type}\n"));
    }
 
    struct TempDir {
