@@ -343,6 +343,24 @@ guidelines. Key standards include:
 npm run standards
 ```
 
+Rust dependency policy is checked on pushes, pull requests, and weekly against the
+committed workspace lockfile. Install cargo-deny and run the same check locally:
+
+```bash
+cargo install cargo-deny --version 0.20.2 --locked
+cargo deny --workspace --all-features --locked check
+```
+
+`deny.toml` checks advisories, licenses, duplicate versions, and dependency sources
+across all platforms, including development dependencies. Duplicate versions produce
+warnings; wildcard dependencies and unapproved sources fail the check. The example
+app has a separate lockfile and is not included in this workspace audit.
+
+Update affected dependencies before adding advisory exceptions. Each exception must
+identify the upstream constraint and explain why an update cannot resolve it. Remove
+exceptions when upstream dependencies no longer require them. Review license additions
+and allow only the registries and Git repositories the workspace needs.
+
 ## License
 
 MIT
