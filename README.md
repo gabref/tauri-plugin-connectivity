@@ -348,6 +348,7 @@ npm run standards
 [CI](.github/workflows/ci.yml) selects the project's jobs and calls local reusable
 workflows with `workflow_call`. Each job has an explicit timeout and read-only
 repository permissions. New commits cancel older runs for the same branch or PR.
+Linux package setup also has a ten-minute step limit and bounded network retries.
 
 | Job | Checks | Default timeout |
 | --- | --- | --- |
