@@ -1,5 +1,5 @@
 name: Setup project Rust
-description: Install the Rust version declared in Cargo.toml with optional components and target.
+description: Install the declared Rust version; requires Python 3.11+ on the runner.
 
 inputs:
    components:
@@ -25,6 +25,9 @@ runs:
         shell: bash
         run: |
            python - <<'PY' >> "$GITHUB_OUTPUT"
+           import sys
+           if sys.version_info < (3, 11):
+               raise SystemExit('Rust setup requires Python 3.11 or newer')
            import tomllib
            with open('Cargo.toml', 'rb') as manifest:
                print('version=' + tomllib.load(manifest)['package']['rust-version'])

@@ -1,9 +1,6 @@
 name: Dependencies
 
 on:
-   push:
-   pull_request:
-      branches: [ "master" ]
    schedule:
       - cron: '23 6 * * 1'
    workflow_dispatch:
@@ -21,7 +18,7 @@ defaults:
       shell: bash
 
 concurrency:
-   group: dependency-policy-${{ github.event.pull_request.number || github.ref }}
+   group: dependency-policy-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
    cancel-in-progress: true
 
 jobs:
