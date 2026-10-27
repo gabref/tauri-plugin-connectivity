@@ -43,12 +43,14 @@ jobs:
 
          - name: Install Linux system dependencies
            if: runner.os == 'Linux' && inputs.linux-packages != ''
+           timeout-minutes: 10
            env:
               LINUX_PACKAGES: ${{ inputs.linux-packages }}
            run: |
               read -r -a packages <<< "$LINUX_PACKAGES"
-              sudo apt-get update
-              sudo apt-get install -y --no-install-recommends "${packages[@]}"
+              apt_options=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+              sudo apt-get "${apt_options[@]}" update
+              sudo apt-get "${apt_options[@]}" install -y --no-install-recommends "${packages[@]}"
 
          - name: Setup Rust
            uses: ./.github/actions/setup-rust
