@@ -1,0 +1,132 @@
+name: Android
+
+on:
+   workflow_call:
+      inputs:
+         package:
+            description: Rust plugin package that generates the Tauri Android API scaffolding.
+            required: true
+            type: string
+         runner:
+            type: string
+            default: ubuntu-24.04
+         timeout-minutes:
+            type: number
+            default: 45
+         java-version:
+            type: string
+            default: '17'
+         sdk-packages:
+            description: Android SDK packages required by the project; the NDK is added separately.
+            required: true
+            type: string
+         ndk-version:
+            type: string
+            default: '29.0.14206865'
+         rust-target:
+            type: string
+            default: aarch64-linux-android
+         min-sdk:
+            type: number
+            default: 24
+         test-args:
+            description: Space-separated Gradle JVM test tasks; empty if the project has none.
+            type: string
+            default: ''
+         build-args:
+            description: Space-separated Gradle build tasks and options.
+            type: string
+            default: assembleDebug
+
+permissions:
+   contents: read
+
+env:
+   CARGO_TERM_COLOR: always
+
+defaults:
+   run:
+      shell: bash
+
+jobs:
+   android:
+      name: Native tests and plugin build
+      runs-on: ${{ inputs.runner }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      steps:
+         - name: Checkout repository
+           uses: actions/checkout@v4
+
+         - name: Setup Java and Gradle cache
+           uses: actions/setup-java@v4
+           with:
+              distribution: temurin
+              java-version: ${{ inputs.java-version }}
+              cache: gradle
+
+         - name: Setup Android SDK
+           uses: android-actions/setup-android@v3
+           with:
+              packages: ${{ inputs.sdk-packages }} ndk;${{ inputs.ndk-version }}
+
+         - name: Setup Rust
+           uses: ./.github/actions/setup-rust
+           with:
+              target: ${{ inputs.rust-target }}
+
+         - name: Export NDK toolchain
+           env:
+              NDK_VERSION: ${{ inputs.ndk-version }}
+              RUST_TARGET: ${{ inputs.rust-target }}
+              MIN_SDK: ${{ inputs.min-sdk }}
+           run: |
+              ndk_dir="$ANDROID_HOME/ndk/$NDK_VERSION"
+              ndk_bin="$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin"
+              case "$RUST_TARGET" in
+                 aarch64-linux-android|x86_64-linux-android|i686-linux-android)
+                    compiler_target="$RUST_TARGET" ;;
+                 armv7-linux-androideabi)
+                    compiler_target='armv7a-linux-androideabi' ;;
+                 *) echo "Unsupported Android target: $RUST_TARGET" >&2; exit 1 ;;
+              esac
+              target_key="${RUST_TARGET//-/_}"
+              {
+                 echo "NDK_HOME=$ndk_dir"
+                 echo "CC_$target_key=$ndk_bin/$compiler_target$MIN_SDK-clang"
+                 echo "AR_$target_key=$ndk_bin/llvm-ar"
+                 echo "CARGO_TARGET_${target_key^^}_LINKER=$ndk_bin/$compiler_target$MIN_SDK-clang"
+              } >> "$GITHUB_ENV"
+
+         - name: Run Kotlin tests
+           if: inputs.test-args != ''
+           working-directory: android
+           env:
+              GRADLE_ARGS: ${{ inputs.test-args }}
+           run: |
+              read -r -a gradle_args <<< "$GRADLE_ARGS"
+              ./gradlew "${gradle_args[@]}"
+
+         - name: Build Rust plugin and Tauri API scaffolding
+           env:
+              PLUGIN_PACKAGE: ${{ inputs.package }}
+              RUST_TARGET: ${{ inputs.rust-target }}
+           run: cargo build --locked -p "$PLUGIN_PACKAGE" --target "$RUST_TARGET"
+
+         - name: Assemble plugin AAR
+           working-directory: android
+           env:
+              GRADLE_ARGS: ${{ inputs.build-args }}
+           run: |
+              read -r -a gradle_args <<< "$GRADLE_ARGS"
+              ./gradlew "${gradle_args[@]}"
+
+         - name: Upload Android reports on failure
+           if: failure()
+           uses: actions/upload-artifact@v4
+           with:
+              name: android-reports
+              path: |
+                 android/**/build/reports/
+                 android/**/build/test-results/
+              if-no-files-found: ignore
+              retention-days: 7

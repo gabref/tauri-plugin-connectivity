@@ -343,6 +343,59 @@ guidelines. Key standards include:
 npm run standards
 ```
 
+### Continuous Integration
+
+[CI](.github/workflows/ci.yml) selects the project's jobs and calls local reusable
+workflows with `workflow_call`. Each job has an explicit timeout and read-only
+repository permissions. New commits cancel older runs for the same branch or PR.
+
+| Job | Checks | Default timeout |
+| --- | --- | --- |
+| Checks | Workflow lint, JavaScript standards/tests, Rust format, commitlint | 10 min |
+| Rust | Workspace Clippy and tests on Linux, Windows, and macOS | 30 min |
+| Android | Kotlin tests, Rust plugin build, Tauri API scaffolding, AAR | 45 min |
+| iOS | Swift tests; optional Rust cross-compilation | 30 min |
+| Continuous Integration | Requires every CI job to succeed | 5 min |
+| Rust Dependency Policy | Advisories, licenses, bans, and sources | 15 min |
+
+The aggregate `Continuous Integration` check fails when a required job fails, is
+cancelled, or is skipped. The dependency policy has its own check and workflow,
+so its weekly schedule does not start the platform jobs.
+
+Setup reads Node.js from `.nvmrc`, npm from `package.json`'s `packageManager`, and
+Rust from the root `Cargo.toml`'s `rust-version`. Rust compilation uses the lockfile
+and cached build dependencies. Java setup owns the Gradle cache. Android SDK and
+NDK packages are explicit, and the project keeps its Gradle wrapper. The Rust
+plugin build generates `android/.tauri/tauri-api` before Gradle assembles the AAR.
+Android reports are retained for seven days when a job fails.
+
+For local checks, `npm run standards` still runs the JavaScript and Rust standards
+and commitlint together. `npm run standards:js` runs the JavaScript standards and
+npm version check separately. `npm ci` runs `prepare`, which builds the bindings.
+CI checks all PR commits against the base SHA, checks the pushed range when its
+previous commit is still an ancestor, and checks the last commit for a new branch,
+rewritten history, or a manual run.
+
+The reusable jobs expose runner, timeout, and command/task arguments. A project can
+override JavaScript commands, Rust feature/test arguments, Linux packages, Android
+SDK/Gradle settings, and Swift package or iOS compilation settings in the caller.
+Cargo and Gradle argument inputs are space-separated tokens, not shell programs;
+wildcards remain literal. JavaScript command inputs are trusted workflow code.
+
+To adopt the template in another plugin, copy the workflow and local action files
+together, then adjust its caller and provide `standards:js` and the JavaScript test
+command. Keep special procedures, such as emulator tests, minified consumers, and
+example builds, in clearly named project jobs. Add each required job to the
+aggregate check's `needs` list. Connectivity currently runs Swift tests in its iOS
+job; another caller can also set `rust-target` and `cargo-args` for a Rust check.
+
+Local actions resolve in the checked-out project. Moving these workflows to a
+shared repository later also requires versioned references for the shared setup
+actions; changing only the workflow's `uses` path is not sufficient. No shared
+hosting repository is required for this pilot.
+
+### Dependency Policy
+
 Rust dependency policy is checked on pushes, pull requests, and weekly against the
 committed workspace lockfile. Install cargo-deny and run the same check locally:
 
