@@ -364,7 +364,8 @@ retain available Gradle reports for seven days.
 ### Dependency Policy
 
 Cargo Deny runs in CI and separately every Monday at 06:23 UTC on the default branch.
-The example app has its own lockfile and is outside the workspace audit. Run the same check locally:
+The example app has its own lockfile and is outside the workspace audit.
+Run the same check locally with these commands.
 
 ```bash
 cargo install cargo-deny@0.20.2 --locked
