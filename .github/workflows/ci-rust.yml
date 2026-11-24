@@ -9,6 +9,10 @@ on:
          timeout-minutes:
             type: number
             default: 30
+         check-default-features:
+            description: Check the workspace with its default features before Clippy.
+            type: boolean
+            default: false
          clippy-args:
             description: Space-separated Cargo arguments before the rustc arguments.
             type: string
@@ -56,6 +60,10 @@ jobs:
            uses: ./.github/actions/setup-rust
            with:
               components: clippy
+
+         - name: Check default features
+           if: inputs.check-default-features
+           run: cargo check --locked --workspace --all-targets
 
          - name: Run Clippy
            env:

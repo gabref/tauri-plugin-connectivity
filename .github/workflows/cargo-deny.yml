@@ -1,0 +1,29 @@
+name: Cargo Deny
+
+on:
+   workflow_call:
+   schedule:
+      - cron: '23 6 * * 1'
+   workflow_dispatch:
+
+permissions:
+   contents: read
+
+jobs:
+   cargo-deny:
+      name: Cargo Deny
+      runs-on: ubuntu-24.04
+      timeout-minutes: 15
+
+      steps:
+         - name: Checkout repository
+           uses: actions/checkout@v4
+
+         - name: Install Rust toolchain
+           run: rustup toolchain install
+
+         - name: Install cargo-deny
+           run: cargo install cargo-deny@0.20.2 --locked
+
+         - name: Check Rust dependencies
+           run: cargo deny --workspace --all-features --locked check

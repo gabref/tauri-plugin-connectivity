@@ -1,5 +1,10 @@
 name: Setup project Node.js
-description: Install the Node.js and npm versions declared by the calling project.
+description: Select the Node.js version from .nvmrc and cache npm downloads.
+
+inputs:
+   cache-dependency-path:
+      description: Lockfiles used for the npm cache key.
+      default: package-lock.json
 
 runs:
    using: composite
@@ -9,13 +14,4 @@ runs:
         with:
            node-version-file: .nvmrc
            cache: npm
-
-      - name: Install declared npm version
-        shell: bash
-        run: |
-           package_manager="$(node -p 'require("./package.json").packageManager')"
-           if [[ ! "$package_manager" =~ ^npm@[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo 'package.json must declare an exact npm version in packageManager' >&2
-              exit 1
-           fi
-           npm install --global "$package_manager"
+           cache-dependency-path: ${{ inputs.cache-dependency-path }}
