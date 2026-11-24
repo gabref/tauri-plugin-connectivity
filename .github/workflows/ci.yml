@@ -18,9 +18,25 @@ concurrency:
    cancel-in-progress: true
 
 jobs:
-   dependencies:
-      name: Dependencies
-      uses: ./.github/workflows/dependencies.yml
+   cargo-deny:
+      name: Cargo Deny
+      runs-on: ubuntu-24.04
+      timeout-minutes: 15
+      permissions:
+         contents: read
+
+      steps:
+         - name: Checkout repository
+           uses: actions/checkout@v4
+
+         - name: Install Rust toolchain
+           run: rustup toolchain install
+
+         - name: Install cargo-deny
+           run: cargo install cargo-deny@0.20.2 --locked
+
+         - name: Check Rust dependencies
+           run: cargo deny --workspace --all-features --locked check
 
    checks:
       name: Checks
@@ -41,6 +57,7 @@ jobs:
       uses: ./.github/workflows/ci-rust.yml
       with:
          runner: ${{ matrix.runner }}
+         linux-packages: dbus-daemon libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
 
    android:
       name: Android
@@ -62,7 +79,7 @@ jobs:
    ci:
       name: Continuous Integration
       if: ${{ always() }}
-      needs: [dependencies, checks, rust, android, ios]
+      needs: [cargo-deny, checks, rust, android, ios]
       runs-on: ubuntu-24.04
       timeout-minutes: 5
       steps:

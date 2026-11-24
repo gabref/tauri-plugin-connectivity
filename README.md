@@ -357,12 +357,10 @@ Linux package setup also has a ten-minute step limit and bounded network retries
 | Android | Kotlin tests, Rust plugin build, Tauri API scaffolding, AAR | 45 min |
 | iOS | Swift core tests and scoped Rust cross-compilation | 30 min |
 | Continuous Integration | Requires every CI job to succeed | 5 min |
-| Rust Dependency Policy | Advisories, licenses, bans, and sources | 15 min |
+| Cargo Deny | Advisories, licenses, bans, and sources | 15 min |
 
-The aggregate `Continuous Integration` check fails when a required job fails, is
-cancelled, or is skipped, including dependency policy. Pushes and PRs invoke the
-policy from CI. Its separate scheduled/manual entry point runs only the policy,
-without starting platform jobs or duplicating the push/PR check.
+The aggregate `Continuous Integration` check requires every selected job,
+including Cargo Deny, to succeed.
 
 Setup reads Node.js from `.nvmrc`, npm from `package.json`'s `packageManager`, and
 Rust from the root `Cargo.toml`'s `rust-version`. The Rust setup action requires

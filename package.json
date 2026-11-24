@@ -3,7 +3,7 @@
    "version": "0.1.0",
    "description": "Network connectivity monitoring plugin for Tauri applications",
    "type": "module",
-   "packageManager": "npm@11.17.0",
+   "packageManager": "npm@11.19.1",
    "types": "./dist-js/index.d.ts",
    "main": "./dist-js/index.cjs",
    "module": "./dist-js/index.js",
